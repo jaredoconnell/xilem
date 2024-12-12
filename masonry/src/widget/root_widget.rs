@@ -7,11 +7,13 @@ use tracing::{trace_span, Span};
 use vello::kurbo::Point;
 use vello::Scene;
 
-use crate::widget::{WidgetMut, WidgetPod};
+use crate::widget::{ContentFill, WidgetMut, WidgetPod};
 use crate::{
     AccessCtx, AccessEvent, BoxConstraints, EventCtx, LayoutCtx, PaintCtx, PointerEvent, QueryCtx,
     RegisterCtx, Size, TextEvent, Widget, WidgetId,
 };
+use crate::axis::Axis;
+use crate::biaxial::BiAxial;
 
 // TODO: This is a hack to provide an accessibility node with a Window type.
 // This should eventually be removed.
@@ -51,6 +53,10 @@ impl<W: Widget> Widget for RootWidget<W> {
         let size = ctx.run_layout(&mut self.pod, bc);
         ctx.place_child(&mut self.pod, Point::ORIGIN);
         size
+    }
+
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        ctx.run_measure(&mut self.pod, axis, fill)
     }
 
     fn paint(&mut self, _ctx: &mut PaintCtx, _scene: &mut Scene) {}

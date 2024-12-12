@@ -3,6 +3,7 @@
 
 //! A widget that arranges its children in a one-dimensional array.
 
+use std::ops::{Index, IndexMut};
 use accesskit::{Node, Role};
 use smallvec::SmallVec;
 use tracing::{trace_span, Span};
@@ -10,11 +11,15 @@ use vello::kurbo::common::FloatExt;
 use vello::kurbo::{Affine, Line, Stroke, Vec2};
 use vello::Scene;
 
-use crate::widget::WidgetMut;
+use crate::theme::get_debug_color;
+use crate::widget::{ContentFill, WidgetMut};
 use crate::{
     AccessCtx, AccessEvent, BoxConstraints, EventCtx, LayoutCtx, PaintCtx, Point, PointerEvent,
     QueryCtx, Rect, Size, TextEvent, Widget, WidgetId, WidgetPod,
 };
+use crate::axis::Axis;
+use crate::axis::Axis::Horizontal;
+use crate::biaxial::BiAxial;
 
 /// A container with either horizontal or vertical layout.
 ///
@@ -40,19 +45,6 @@ pub struct Flex {
 pub struct FlexParams {
     flex: Option<f64>,
     alignment: Option<CrossAxisAlignment>,
-}
-
-/// An axis in visual space.
-///
-/// Most often used by widgets to describe
-/// the direction in which they grow as their number of children increases.
-/// Has some methods for manipulating geometry with respect to the axis.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Axis {
-    /// The x axis
-    Horizontal,
-    /// The y axis
-    Vertical,
 }
 
 /// The alignment of the widgets on the container's cross (or minor) axis.
@@ -112,8 +104,20 @@ enum Child {
         alignment: Option<CrossAxisAlignment>,
         flex: f64,
     },
-    FixedSpacer(f64, f64),
-    FlexedSpacer(f64, f64),
+    FixedSpacer(f64),
+    FlexedSpacer(f64),
+}
+
+// Internal data types
+
+struct FlexMeasurement {
+    child_index: usize,
+    // The max size, calculated if the item is a flex item.
+    max_size: Option<f64>,
+    // The final size, from the fixed size or from the final flex size.
+    final_major_size: Option<f64>,
+    // The final cross size, measured after the final major size is calculated.
+    final_cross_size: Option<f64>,
 }
 
 // --- MARK: IMPL FLEX ---
@@ -126,7 +130,7 @@ impl Flex {
             cross_alignment: CrossAxisAlignment::Center,
             main_alignment: MainAxisAlignment::Start,
             fill_major_axis: false,
-            old_bc: BoxConstraints::tight(Size::ZERO),
+            old_bc: BoxConstraints::new(Size::ZERO),
             gap: None,
         }
     }
@@ -274,7 +278,7 @@ impl Flex {
         }
         len = len.clamp(0.0, f64::MAX);
 
-        let new_child = Child::FixedSpacer(len, 0.0);
+        let new_child = Child::FixedSpacer(len);
         self.children.push(new_child);
         self
     }
@@ -287,7 +291,7 @@ impl Flex {
             debug_panic!("add_spacer called with negative length: {}", flex);
             0.0
         };
-        let new_child = Child::FlexedSpacer(flex, 0.0);
+        let new_child = Child::FlexedSpacer(flex);
         self.children.push(new_child);
         self
     }
@@ -430,7 +434,7 @@ impl Flex {
         }
         len = len.clamp(0.0, f64::MAX);
 
-        let new_child = Child::FixedSpacer(len, 0.0);
+        let new_child = Child::FixedSpacer(len);
         this.widget.children.push(new_child);
         this.ctx.request_layout();
     }
@@ -443,7 +447,7 @@ impl Flex {
             debug_panic!("add_spacer called with negative length: {}", flex);
             0.0
         };
-        let new_child = Child::FlexedSpacer(flex, 0.0);
+        let new_child = Child::FlexedSpacer(flex);
         this.widget.children.push(new_child);
         this.ctx.request_layout();
     }
@@ -514,7 +518,7 @@ impl Flex {
         }
         len = len.clamp(0.0, f64::MAX);
 
-        let new_child = Child::FixedSpacer(len, 0.0);
+        let new_child = Child::FixedSpacer(len);
         this.widget.children.insert(idx, new_child);
         this.ctx.request_layout();
     }
@@ -527,7 +531,7 @@ impl Flex {
             debug_panic!("add_spacer called with negative length: {}", flex);
             0.0
         };
-        let new_child = Child::FlexedSpacer(flex, 0.0);
+        let new_child = Child::FlexedSpacer(flex);
         this.widget.children.insert(idx, new_child);
         this.ctx.request_layout();
     }
@@ -565,7 +569,7 @@ impl Flex {
         params: impl Into<FlexParams>,
     ) {
         let child = &mut this.widget.children[idx];
-        let child_val = std::mem::replace(child, Child::FixedSpacer(0.0, 0.0));
+        let child_val = std::mem::replace(child, Child::FixedSpacer(0.0));
         let widget = match child_val {
             Child::Fixed { widget, .. } | Child::Flex { widget, .. } => widget,
             _ => {
@@ -586,8 +590,8 @@ impl Flex {
         let child = &mut this.widget.children[idx];
 
         match *child {
-            Child::FixedSpacer(_, _) | Child::FlexedSpacer(_, _) => {
-                *child = Child::FlexedSpacer(flex, 0.0);
+            Child::FixedSpacer(_) | Child::FlexedSpacer(_) => {
+                *child = Child::FlexedSpacer(flex);
             }
             _ => {
                 panic!("Can't update spacer parameters of a non-spacer element");
@@ -605,8 +609,8 @@ impl Flex {
         let child = &mut this.widget.children[idx];
 
         match *child {
-            Child::FixedSpacer(_, _) | Child::FlexedSpacer(_, _) => {
-                *child = Child::FixedSpacer(len, 0.0);
+            Child::FixedSpacer(_) | Child::FlexedSpacer(_) => {
+                *child = Child::FixedSpacer(len);
             }
             _ => {
                 panic!("Can't update spacer parameters of a non-spacer element");
@@ -626,100 +630,299 @@ impl Flex {
             }
         }
     }
+
+    // Private functions
+
+    /// Measures all non-flex children, saving the results in the children variable,
+    /// and returning the sum of the measurements along the primary axis, and the largest
+    /// cross-axis measurement.
+    fn measure_non_flex_children(
+        &mut self,
+        ctx: &mut LayoutCtx,
+        children: &mut Vec<FlexMeasurement>,
+        measure_fill: &BiAxial<ContentFill>,
+    ) -> f64 {
+        let mut major_non_flex = 0.0;
+        // TODO: This used to use bc.min.
+        //let mut minor: f64 = 0.0;
+
+        for child_measurements in children {
+            let child = self.children.index_mut(child_measurements.child_index);
+            match child {
+                Child::Fixed { widget, alignment } => {
+                    let major_axis_size= { /*bc_changed || ctx.child_needs_layout(widget)*/
+                        // TODO: baseline
+                        //let alignment = alignment.unwrap_or(self.cross_alignment);
+                        //any_use_baseline |= alignment == CrossAxisAlignment::Baseline;
+
+                        //let old_size = ctx.widget_state.layout_rect().size();
+                        // TODO: Determine if we can defer the cross-axis measurement.
+                        let major_measurement = ctx.run_measure(widget, self.direction, &measure_fill);
+                        //let minor_measurement = ctx.run_measure(widget, self.direction.cross(), &measure_fill);
+
+                        if major_measurement.is_infinite() {
+                            // TODO: Determine if this causes problems, and should even be counted,
+                            //  and if it's even possible for this to happen with current measure code.
+                            tracing::warn!("A non-Flex child has an infinite major axis.");
+                        }
+
+                        /*if minor_measurement.is_infinite() {
+                            tracing::warn!("A non-Flex child has an infinite minor axis.");
+                        }*/
+
+                        //if old_size != child_size {
+                        // TODO: Determine changed optimization logic.
+                        //any_changed = true;
+                        //}
+
+                        //(major_measurement, minor_measurement)
+                        major_measurement
+                    };/* else {
+                        ctx.skip_layout(widget);
+                        ctx.child_layout_rect(widget).size()
+                    };*/
+
+                    // TODO
+                    //let baseline_offset = ctx.child_baseline_offset(widget);
+
+                    major_non_flex += major_axis_size;
+                    //minor = minor.max(minor_axis_size);
+
+                    child_measurements.final_major_size = Some(major_axis_size)
+                    // TODO
+                    /*max_above_baseline =
+                        max_above_baseline.max(child_size.height - baseline_offset);
+                    max_below_baseline = max_below_baseline.max(baseline_offset);*/
+                }
+                Child::FixedSpacer(kv) => {
+                    let mut calculated_size = *kv;
+                    if calculated_size < 0.0 {
+                        tracing::warn!("Length provided to fixed spacer was less than 0");
+                    }
+                    calculated_size = calculated_size.max(0.0);
+                    major_non_flex += calculated_size;
+                    child_measurements.final_major_size = Some(calculated_size);
+                }
+                _ => {}
+            }
+        }
+        major_non_flex
+    }
+
+    /// Measures max stretch size for each flex child, and sums the initial flex sum.
+    fn prepare_flex_children(&mut self, ctx: &mut LayoutCtx, cross_axis_fill: ContentFill, children: &mut Vec<FlexMeasurement>) -> f64 {
+        let measure_fill = BiAxial::new_by_axis(
+            ContentFill::MaxStretch,
+            cross_axis_fill,
+            self.direction,
+        );
+
+        let mut flex_sum = 0.0;
+        for child_measurements in children {
+            let child = self.children.index_mut(child_measurements.child_index);
+            match child {
+                Child::Flex {
+                    widget,
+                    flex,
+                    alignment: _alignment,
+                } => {
+                    flex_sum += *flex;
+                    let max_size =  ctx.run_measure(widget, self.direction, &measure_fill);
+                    if max_size.is_finite() {
+                        child_measurements.max_size = Some(max_size);
+                    }
+                }
+                Child::FlexedSpacer(flex) => {
+                    flex_sum += *flex;
+                }
+                _ => {}
+            }
+        }
+        flex_sum
+    }
+
+    /// Returns the remaining space after all flex items are accounted for.
+    /// Will be zero unless all items cannot expand enough to fill the space.
+    fn handle_flex_grow(
+        &self,
+        initial_flex_sum: f64,
+        major_axis_space: f64,
+        major_fixed_size: f64,
+        children: &mut Vec<FlexMeasurement>,
+    ) -> f64 {
+        // Flex grow:
+        //  - Measure every flex item with MaxStretch on the primary axis. Save to array.
+        //  - Sum all flex items.
+        //  - While Loop: defined in https://www.w3.org/TR/css-flexbox-1/#resolve-flexible-lengths
+        //    - Calculate ideal size/flex assuming all items fit
+        //    - Iterate over items. If one cannot expand to the required size, that is the final
+        //      size of the widget. Remove from flex calculation and add to sum of known non-flex.
+        //    - Repeat until there are no more flex items that cannot expand.
+        //    - If there are items with the min size greater than the calculated flex size for them,
+        //      use their min size.
+        // I think this can be done by having all items in an array, with values being structs that
+        //  have their max size and their final size. Static items will be included with their final
+        //  size already set. As items grow or shrink to their max/min sizes, their final sizes will
+        //  be set. Once all values have been set, it's done.
+        let mut remaining_flex_sum = initial_flex_sum;
+        let mut remaining_space = (major_axis_space - major_fixed_size).max(0.0);
+        loop {
+            let size_per_flex = remaining_space / remaining_flex_sum;
+            let mut item_size_set = false;
+            for child_measurements in &mut *children {
+                let child = self.children.index(child_measurements.child_index);
+                match (child, child_measurements.max_size, child_measurements.final_major_size) {
+                    (Child::Flex {flex, ..} | Child::FlexedSpacer(flex), Some(max_size), None) => {
+                        // If the item cannot expand beyond the ideal flex size, that is its final size.
+                        // This is known as a max violation.
+                        if max_size <= flex * size_per_flex {
+                            child_measurements.final_major_size = Some(max_size);
+                            item_size_set = true;
+                            remaining_flex_sum -= flex;
+                            remaining_space -= max_size;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // If no sizes are set, there were no max violations, and therefore we're done.
+            if !item_size_set {
+                // Loop over remaining items and set their size to the flex size
+                for child_measurements in &mut *children {
+                    let child = self.children.index(child_measurements.child_index);
+                    match (child, child_measurements.final_major_size) {
+                        (Child::Flex {flex, ..} | Child::FlexedSpacer(flex), None) => {
+                            let size = flex * size_per_flex;
+                            child_measurements.final_major_size = Some(size);
+                            remaining_space -= size;
+                        }
+                        _ => {}
+                    }
+                }
+                return remaining_space;
+            }
+        }
+    }
+
+    fn handle_cross_axis(&mut self, ctx: &mut LayoutCtx, max_cross_size: Option<f64>, children: &mut Vec<FlexMeasurement>) {
+        // For each item
+        // - If stretch is selected for the cross axis, check the stretch value.
+        // - Else measure the intrinsic size of each item given the size constraint for the main axis.
+        for child_measurements in children {
+            let child = self.children.index_mut(child_measurements.child_index);
+            match child {
+                Child::Fixed { widget, alignment }
+                | Child::Flex {
+                    widget, alignment, ..
+                } => {
+                    let alignment = alignment.unwrap_or(self.cross_alignment);
+                    let primary_axis_constraint = if let Some(primary_fill) = child_measurements.final_major_size {
+                        ContentFill::Constrain(primary_fill)
+                    } else {
+                        ContentFill::Max
+                    };
+                    let measure_fill = BiAxial::new_by_axis(
+                        primary_axis_constraint,
+                        if alignment == CrossAxisAlignment::Fill { ContentFill::MaxStretch } else { ContentFill::Max },
+                        self.direction,
+                    );
+
+                    let cross_measurement = ctx.run_measure(widget, self.direction.cross(), &measure_fill);
+                    // Clamp to fit.
+                    child_measurements.final_cross_size = Some(if let Some(max_cross_size) = max_cross_size {
+                        cross_measurement.min(max_cross_size)
+                    } else {
+                        cross_measurement
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn layout_from_measurements(
+        &mut self,
+        ctx: &mut LayoutCtx,
+        bc: &BoxConstraints,
+        remaining_space: f64,
+        children: &mut Vec<FlexMeasurement>,
+    ) {
+        let mut spacing = Spacing::new(self.main_alignment, remaining_space, self.children.len());
+
+        // the actual size needed to tightly fit the children on the minor axis.
+        // Unlike the 'minor' var, this ignores the incoming constraints.
+        /*let minor_dim = match self.direction {
+            Axis::Horizontal if any_use_baseline => max_below_baseline + max_above_baseline,
+            _ => minor,
+        };*/
+
+        //let extra_height = minor;// - minor_dim.min(minor);
+        let mut major = spacing.next().unwrap_or(0.);
+        let mut child_paint_rect = Rect::ZERO;
+        let gap = self.gap.unwrap_or(axis_default_spacer(self.direction));
+        let minor_dim = self.direction.minor(bc.size());
+
+        for child_measurements in children {
+            let child = self.children.index_mut(child_measurements.child_index);
+            match child {
+                Child::Fixed { widget, alignment }
+                | Child::Flex {
+                    widget, alignment, ..
+                } => {
+                    let final_alignment = if let Some(widget_alignment) = alignment {
+                        *widget_alignment
+                    } else {
+                        self.cross_alignment
+                    };
+                    //let child_size = ctx.child_size(widget);
+                    //let alignment = alignment.unwrap_or(self.cross_alignment);
+                    let child_minor_offset = match final_alignment {
+                        // This will ignore baseline alignment if it is overridden on children,
+                        // but is not the default for the container. Is this okay?
+                        CrossAxisAlignment::Baseline
+                        if matches!(self.direction, Horizontal) =>
+                            {
+                                todo!();
+                                /*let child_baseline = ctx.child_baseline_offset(widget);
+                                let child_above_baseline = child_size.height - child_baseline;
+                                extra_height + (max_above_baseline - child_above_baseline)*/
+                            }
+                        alignment => {
+                            let extra_minor = minor_dim - child_measurements.final_cross_size.expect("cross size should be set before final layout");
+                            alignment.align(extra_minor)
+                        },
+                    };
+
+                    // First layout
+                    let primary_axis_size = child_measurements.final_major_size.expect("major dimension should be known during final layout");
+                    let cross_axis_size = child_measurements.final_cross_size.expect("cross dimension should be known during final layout");
+                    let child_bc = BoxConstraints::new(
+                        if self.direction == Horizontal {
+                            Size::new(primary_axis_size, cross_axis_size)
+                        } else {
+                            Size::new(cross_axis_size, primary_axis_size)
+                        }
+                    );
+                    let child_size = ctx.run_layout(widget, &child_bc);
+                    // Second, positioning
+                    let child_pos: Point = self.direction.pack(major, child_minor_offset).into();
+                    ctx.place_child(widget, child_pos);
+                    child_paint_rect = child_paint_rect.union(ctx.widget_state.paint_rect());
+                    major += self.direction.major(child_size).expand();
+                    major += spacing.next().unwrap_or(0.);
+                    major += gap;
+                }
+                Child::FlexedSpacer(_)
+                | Child::FixedSpacer(_) => {
+                    major += child_measurements.final_major_size.expect("final spacer size should be set");
+                    major += gap;
+                }
+            }
+        }
+    }
 }
 
 // --- MARK: OTHER IMPLS---
-impl Axis {
-    /// Get the axis perpendicular to this one.
-    pub fn cross(self) -> Axis {
-        match self {
-            Axis::Horizontal => Axis::Vertical,
-            Axis::Vertical => Axis::Horizontal,
-        }
-    }
-
-    /// Extract from the argument the magnitude along this axis
-    pub fn major(self, size: Size) -> f64 {
-        match self {
-            Axis::Horizontal => size.width,
-            Axis::Vertical => size.height,
-        }
-    }
-
-    /// Extract from the argument the magnitude along the perpendicular axis
-    pub fn minor(self, size: Size) -> f64 {
-        self.cross().major(size)
-    }
-
-    /// Extract the extent of the argument in this axis as a pair.
-    pub fn major_span(self, rect: Rect) -> (f64, f64) {
-        match self {
-            Axis::Horizontal => (rect.x0, rect.x1),
-            Axis::Vertical => (rect.y0, rect.y1),
-        }
-    }
-
-    /// Extract the extent of the argument in the minor axis as a pair.
-    pub fn minor_span(self, rect: Rect) -> (f64, f64) {
-        self.cross().major_span(rect)
-    }
-
-    /// Extract the coordinate locating the argument with respect to this axis.
-    pub fn major_pos(self, pos: Point) -> f64 {
-        match self {
-            Axis::Horizontal => pos.x,
-            Axis::Vertical => pos.y,
-        }
-    }
-
-    /// Extract the coordinate locating the argument with respect to this axis.
-    pub fn major_vec(self, vec: Vec2) -> f64 {
-        match self {
-            Axis::Horizontal => vec.x,
-            Axis::Vertical => vec.y,
-        }
-    }
-
-    /// Extract the coordinate locating the argument with respect to the perpendicular axis.
-    pub fn minor_pos(self, pos: Point) -> f64 {
-        self.cross().major_pos(pos)
-    }
-
-    /// Extract the coordinate locating the argument with respect to the perpendicular axis.
-    pub fn minor_vec(self, vec: Vec2) -> f64 {
-        self.cross().major_vec(vec)
-    }
-
-    // TODO - make_pos, make_size, make_rect
-    /// Arrange the major and minor measurements with respect to this axis such that it forms
-    /// an (x, y) pair.
-    pub fn pack(self, major: f64, minor: f64) -> (f64, f64) {
-        match self {
-            Axis::Horizontal => (major, minor),
-            Axis::Vertical => (minor, major),
-        }
-    }
-
-    /// Generate constraints with new values on the major axis.
-    pub(crate) fn constraints(
-        self,
-        bc: &BoxConstraints,
-        min_major: f64,
-        major: f64,
-    ) -> BoxConstraints {
-        match self {
-            Axis::Horizontal => BoxConstraints::new(
-                Size::new(min_major, bc.min().height),
-                Size::new(major, bc.max().height),
-            ),
-            Axis::Vertical => BoxConstraints::new(
-                Size::new(bc.min().width, min_major),
-                Size::new(bc.max().width, major),
-            ),
-        }
-    }
-}
-
 impl FlexParams {
     /// Create custom `FlexParams` with a specific `flex_factor` and an optional
     /// [`CrossAxisAlignment`].
@@ -922,257 +1125,151 @@ impl Widget for Flex {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx, bc: &BoxConstraints) -> Size {
-        // we loosen our constraints when passing to children.
-        let loosened_bc = bc.loosen();
+        let gap = self.gap.unwrap_or(axis_default_spacer(self.direction));
+        // The gaps are only between the items, so 2 children means 1 gap.
+        let total_gap = self.children.len().saturating_sub(1) as f64 * gap;
+        let mut calculated_sizes = Vec::with_capacity(self.children.len());
+        for (child_index, child) in &mut self.children.iter().enumerate() {
+            calculated_sizes.push(FlexMeasurement{child_index, max_size: None, final_major_size: None, final_cross_size: None })
+        }
 
         // minor-axis values for all children
-        let mut minor = self.direction.minor(bc.min());
+        // TODO: This used to use bc.min
+        //let mut minor: f64 = 0.0;
         // these two are calculated but only used if we're baseline aligned
-        let mut max_above_baseline = 0_f64;
-        let mut max_below_baseline = 0_f64;
-        let mut any_use_baseline = false;
+        // TODO
+        //let mut max_above_baseline = 0_f64;
+        //let mut max_below_baseline = 0_f64;
+        //let mut any_use_baseline = false;
 
         // indicates that the box constrains for the following children have changed. Therefore they
         // have to calculate layout again.
         let bc_changed = self.old_bc != *bc;
-        let mut any_changed = bc_changed;
+        //let mut any_changed = bc_changed;
         self.old_bc = *bc;
 
-        let gap = self.gap.unwrap_or(axis_default_spacer(self.direction));
-        // The gaps are only between the items, so 2 children means 1 gap.
-        let total_gap = self.children.len().saturating_sub(1) as f64 * gap;
-        // Measure non-flex children.
-        let mut major_non_flex = total_gap;
+        // TODO: This could either be the dimensions of the space or it could be
+        //  unconstrained on both axes, or just the primary axis.
+        let measure_fill = BiAxial::new(
+            ContentFill::Constrain(bc.size().width),
+            ContentFill::Constrain(bc.size().height),
+        );
+
+        // Measure non-flex children. This should be done first since it reduces room
+        // available to flex children.
+        let major_non_flex= self.measure_non_flex_children(ctx, &mut calculated_sizes, &measure_fill);
+        //minor = minor_non_flex;
+        let major_non_flex = total_gap + major_non_flex;
         // We start with a small value to avoid divide-by-zero errors.
-        const MIN_FLEX_SUM: f64 = 0.0001;
-        let mut flex_sum = MIN_FLEX_SUM;
-        for child in &mut self.children {
-            match child {
-                Child::Fixed { widget, alignment } => {
-                    // The BoxConstraints of fixed-children only depends on the BoxConstraints of the
-                    // Flex widget.
-                    let child_size = if bc_changed || ctx.child_needs_layout(widget) {
-                        let alignment = alignment.unwrap_or(self.cross_alignment);
-                        any_use_baseline |= alignment == CrossAxisAlignment::Baseline;
 
-                        let old_size = ctx.widget_state.layout_rect().size();
-                        let child_size = ctx.run_layout(widget, &loosened_bc);
 
-                        if child_size.width.is_infinite() {
-                            tracing::warn!("A non-Flex child has an infinite width.");
-                        }
+        let total_major_space = self.direction.major(bc.size());
+        //let remaining = (total_major - major_non_flex).max(0.0);
+        //let mut remainder: f64 = 0.0;
 
-                        if child_size.height.is_infinite() {
-                            tracing::warn!("A non-Flex child has an infinite height.");
-                        }
+        let initial_major_flex: f64 = self.prepare_flex_children(
+            ctx,
+            ContentFill::Constrain(self.direction.minor(bc.size())),
+            &mut calculated_sizes,
+        );
+        //let px_per_flex = remaining / flex_sum;
 
-                        if old_size != child_size {
-                            any_changed = true;
-                        }
+        // Handle flex grow on the major axis.
+        let remaining_space = self.handle_flex_grow(initial_major_flex, total_major_space, major_non_flex, &mut calculated_sizes);
 
-                        child_size
-                    } else {
-                        ctx.skip_layout(widget);
-                        ctx.child_layout_rect(widget).size()
-                    };
+        // TODO: Consider flex shrink logic. - Later
 
-                    let baseline_offset = ctx.child_baseline_offset(widget);
-
-                    major_non_flex += self.direction.major(child_size).expand();
-                    minor = minor.max(self.direction.minor(child_size).expand());
-                    max_above_baseline =
-                        max_above_baseline.max(child_size.height - baseline_offset);
-                    max_below_baseline = max_below_baseline.max(baseline_offset);
-                }
-                Child::FixedSpacer(kv, calculated_size) => {
-                    *calculated_size = *kv;
-                    if *calculated_size < 0.0 {
-                        tracing::warn!("Length provided to fixed spacer was less than 0");
-                    }
-                    *calculated_size = calculated_size.max(0.0);
-                    major_non_flex += *calculated_size;
-                }
-                Child::Flex { flex, .. } | Child::FlexedSpacer(flex, _) => flex_sum += *flex,
-            }
-        }
-
-        let total_major = self.direction.major(bc.max());
-        let remaining = (total_major - major_non_flex).max(0.0);
-        let mut remainder: f64 = 0.0;
-
-        let mut major_flex: f64 = 0.0;
-        let px_per_flex = remaining / flex_sum;
-        // Measure flex children.
-        for child in &mut self.children {
-            match child {
-                Child::Flex {
-                    widget,
-                    flex,
-                    alignment,
-                } => {
-                    // The BoxConstraints of flex-children depends on the size of every sibling, which
-                    // received layout earlier. Therefore we use any_changed.
-                    let child_size = if any_changed || ctx.child_needs_layout(widget) {
-                        let alignment = alignment.unwrap_or(self.cross_alignment);
-                        any_use_baseline |= alignment == CrossAxisAlignment::Baseline;
-
-                        let desired_major = (*flex) * px_per_flex + remainder;
-                        let actual_major = desired_major.round();
-                        remainder = desired_major - actual_major;
-
-                        let old_size = ctx.widget_state.layout_rect().size();
-                        let child_bc = self.direction.constraints(&loosened_bc, 0.0, actual_major);
-                        let child_size = ctx.run_layout(widget, &child_bc);
-
-                        if old_size != child_size {
-                            any_changed = true;
-                        }
-
-                        child_size
-                    } else {
-                        ctx.skip_layout(widget);
-                        ctx.child_layout_rect(widget).size()
-                    };
-
-                    let baseline_offset = ctx.child_baseline_offset(widget);
-
-                    major_flex += self.direction.major(child_size).expand();
-                    minor = minor.max(self.direction.minor(child_size).expand());
-                    max_above_baseline =
-                        max_above_baseline.max(child_size.height - baseline_offset);
-                    max_below_baseline = max_below_baseline.max(baseline_offset);
-                }
-                Child::FlexedSpacer(flex, calculated_size) => {
-                    let desired_major = (*flex) * px_per_flex + remainder;
-                    *calculated_size = desired_major.round();
-                    remainder = desired_major - *calculated_size;
-                    major_flex += *calculated_size;
-                }
-                _ => {}
-            }
-        }
-
-        // figure out if we have extra space on major axis, and if so how to use it
-        let extra = if self.fill_major_axis {
-            (remaining - major_flex).max(0.0)
+        // TODO: Measure cross axis using final primary axis size.
+        let max_cross_size = if self.direction == Horizontal {
+            bc.size().height
         } else {
-            // if we are *not* expected to fill our available space this usually
-            // means we don't have any extra, unless dictated by our constraints.
-            (self.direction.major(bc.min()) - (major_non_flex + major_flex)).max(0.0)
+            bc.size().width
         };
+        self.handle_cross_axis(ctx, Some(max_cross_size), &mut calculated_sizes);
 
-        let mut spacing = Spacing::new(self.main_alignment, extra, self.children.len());
+        // TODO: Set final sizes.
+        self.layout_from_measurements(ctx, bc, remaining_space, &mut calculated_sizes);
+        return bc.size()
+    }
 
-        // the actual size needed to tightly fit the children on the minor axis.
-        // Unlike the 'minor' var, this ignores the incoming constraints.
-        let minor_dim = match self.direction {
-            Axis::Horizontal if any_use_baseline => max_below_baseline + max_above_baseline,
-            _ => minor,
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        let mut calculated_sizes = Vec::with_capacity(self.children.len());
+        for (child_index, child) in &mut self.children.iter().enumerate() {
+            calculated_sizes.push(FlexMeasurement{child_index, max_size: None, final_major_size: None, final_cross_size: None })
+        }
+        let is_primary_axis = axis == self.direction;
+        let on_axis_fill = fill.value_for_axis(axis);
+        // Flex stretches to fill the entire space.
+        if on_axis_fill == ContentFill::MaxStretch {
+            return f64::INFINITY
+        }
+        // min must measure the intrinsic size of all non-flex items
+        // For now, there is no flex shrink or min measure, so no need to measure flex items.
+        // Max must measure the intrinsic size of all items.
+        // For min and max, if the axis matches, add them. If not, get the max size of all items.
+        let major_non_flex= self.measure_non_flex_children(ctx, &mut calculated_sizes, fill);
+        let total_gap = if is_primary_axis {
+            let gap = self.gap.unwrap_or(axis_default_spacer(self.direction));
+            gap * ((self.children.len() - 1).max(0) as f64)
+        } else {
+            0.0
         };
-
-        let extra_height = minor - minor_dim.min(minor);
-
-        let mut major = spacing.next().unwrap_or(0.);
-        let mut child_paint_rect = Rect::ZERO;
-
-        for child in &mut self.children {
-            match child {
-                Child::Fixed { widget, alignment }
-                | Child::Flex {
-                    widget, alignment, ..
-                } => {
-                    let child_size = ctx.child_size(widget);
-                    let alignment = alignment.unwrap_or(self.cross_alignment);
-                    let child_minor_offset = match alignment {
-                        // This will ignore baseline alignment if it is overridden on children,
-                        // but is not the default for the container. Is this okay?
-                        CrossAxisAlignment::Baseline
-                            if matches!(self.direction, Axis::Horizontal) =>
-                        {
-                            let child_baseline = ctx.child_baseline_offset(widget);
-                            let child_above_baseline = child_size.height - child_baseline;
-                            extra_height + (max_above_baseline - child_above_baseline)
-                        }
-                        CrossAxisAlignment::Fill => {
-                            let fill_size: Size = self
-                                .direction
-                                .pack(self.direction.major(child_size), minor_dim)
-                                .into();
-                            if ctx.widget_state.layout_rect().size() != fill_size {
-                                let child_bc = BoxConstraints::tight(fill_size);
-                                //TODO: this is the second call of layout on the same child, which
-                                // is bad, because it can lead to exponential increase in layout calls
-                                // when used multiple times in the widget hierarchy.
-                                ctx.run_layout(widget, &child_bc);
-                            }
-                            0.0
-                        }
-                        _ => {
-                            let extra_minor = minor_dim - self.direction.minor(child_size);
-                            alignment.align(extra_minor)
-                        }
-                    };
-
-                    let child_pos: Point = self.direction.pack(major, child_minor_offset).into();
-                    ctx.place_child(widget, child_pos);
-                    child_paint_rect = child_paint_rect.union(ctx.widget_state.paint_rect());
-                    major += self.direction.major(child_size).expand();
-                    major += spacing.next().unwrap_or(0.);
-                    major += gap;
-                }
-                Child::FlexedSpacer(_, calculated_size)
-                | Child::FixedSpacer(_, calculated_size) => {
-                    major += *calculated_size;
-                    major += gap;
+        let widget_sizes = if is_primary_axis {
+            // For min, ignore flex items
+            if on_axis_fill == ContentFill::Min {
+                return major_non_flex;
+            }
+            // Just measure every flex item and return the sum.
+            let mut total_size = major_non_flex;
+            for child in &mut self.children {
+                match child {
+                    Child::Flex {
+                        widget,
+                        flex: _flex,
+                        alignment: _alignment,
+                    } => {
+                        let measured_size = ctx.run_measure(widget, self.direction, &fill);
+                        total_size += measured_size;
+                    }
+                    _ => {},
                 }
             }
-        }
+            total_size
+        } else {
+            // If there is a primary axis constraint then we can use it to calculate cross size if
+            // the flex items expand to fill the constraints. This is because wrapping can increase
+            // the cross-axis size.
+            let cross_fill = fill.value_for_axis(self.direction.cross());
+            let max_cross_size = match cross_fill {
+                ContentFill::Constrain(max_cross_size) => {
+                    Some(max_cross_size)
+                },
+                _ => {
+                    None
+                }
+            };
+            if let ContentFill::Constrain(max_size) = on_axis_fill {
+                // Calculate major axis sizes from flex sizes
 
-        if flex_sum > 0.0 && total_major.is_infinite() {
-            tracing::warn!("A child of Flex is flex, but Flex is unbounded.");
-        }
-
-        if !self.children.is_empty() {
-            // If we have at least one child, the last child added `gap` to `major`, which means that `major` is
-            // not the total size of the flex in the major axis, it's instead where the "next widget" will be placed.
-            // However, for the rest of this value, we need the total size of the widget in the major axis.
-            major -= gap;
-        }
-
-        if flex_sum > MIN_FLEX_SUM {
-            major = total_major;
-        }
-
-        // my_size may be larger than the given constraints.
-        // In which case, the Flex widget will either overflow its parent
-        // or be clipped (e.g. if its parent is a Portal).
-        let my_size: Size = self.direction.pack(major, minor_dim).into();
-
-        let my_bounds = Rect::ZERO.with_size(my_size);
-        let insets = child_paint_rect - my_bounds;
-        ctx.set_paint_insets(insets);
-
-        let baseline_offset = match self.direction {
-            Axis::Horizontal => max_below_baseline,
-            Axis::Vertical => self
-                .children
-                .last()
-                .map(|last| {
-                    let child = last.widget();
-                    if let Some(widget) = child {
-                        let child_bl = ctx.child_baseline_offset(widget);
-                        let child_max_y = ctx.child_layout_rect(widget).max_y();
-                        let extra_bottom_padding = my_size.height - child_max_y;
-                        child_bl + extra_bottom_padding
-                    } else {
-                        0.0
-                    }
-                })
-                .unwrap_or(0.0),
+                let flex_sum = self.prepare_flex_children(ctx, cross_fill, &mut calculated_sizes);
+                self.handle_flex_grow(flex_sum, max_size, major_non_flex, &mut calculated_sizes);
+                self.handle_cross_axis(ctx, max_cross_size, &mut calculated_sizes);
+            } else {
+                // Skip calculating flex sizes since there is no known constraint.
+                self.handle_cross_axis(ctx, max_cross_size, &mut calculated_sizes);
+            }
+            let mut max = 0.0;
+            // Loop over measurements to get the max cross size.
+            for child in calculated_sizes {
+                // TODO: See if we also need to account for the default gap.
+                let cross_size = child.final_cross_size.unwrap_or(0.0);
+                if cross_size > max {
+                    max = cross_size
+                }
+            }
+            max
         };
-
-        ctx.set_baseline_offset(baseline_offset);
-        my_size
+        widget_sizes + total_gap
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx, scene: &mut Scene) {

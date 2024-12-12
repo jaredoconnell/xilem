@@ -12,11 +12,13 @@ use vello::kurbo::{Point, Size};
 use vello::Scene;
 
 use crate::text::{ArcStr, StyleProperty};
-use crate::widget::WidgetMut;
+use crate::widget::{ContentFill, WidgetMut};
 use crate::{
     AccessCtx, AccessEvent, BoxConstraints, EventCtx, FontWeight, LayoutCtx, PaintCtx,
     PointerEvent, QueryCtx, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetId,
 };
+use crate::axis::Axis;
+use crate::biaxial::BiAxial;
 
 use super::{Label, WidgetPod};
 
@@ -217,6 +219,10 @@ impl Widget for VariableLabel {
         let size = ctx.run_layout(&mut self.label, bc);
         ctx.place_child(&mut self.label, Point::ORIGIN);
         size
+    }
+
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        ctx.run_measure(&mut self.label, axis, fill)
     }
 
     fn paint(&mut self, _ctx: &mut PaintCtx, _scene: &mut Scene) {}

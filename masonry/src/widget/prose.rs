@@ -9,11 +9,13 @@ use tracing::{trace_span, Span};
 use vello::kurbo::{Point, Rect, Size};
 use vello::Scene;
 
-use crate::widget::WidgetMut;
+use crate::widget::{ContentFill, WidgetMut};
 use crate::{
     AccessCtx, AccessEvent, BoxConstraints, EventCtx, LayoutCtx, PaintCtx, PointerEvent, QueryCtx,
     RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetId,
 };
+use crate::axis::Axis;
+use crate::biaxial::BiAxial;
 
 use super::{Padding, TextArea, WidgetPod};
 
@@ -135,6 +137,24 @@ impl Widget for Prose {
         size
     }
 
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        if fill.value_for_axis(axis) == ContentFill::MaxStretch {
+            return f64::INFINITY;
+        }
+        let child_fill = fill.shrink_constraints(
+            &BiAxial::new(
+                PROSE_PADDING.get_axis_padding(Axis::Horizontal),
+                PROSE_PADDING.get_axis_padding(Axis::Vertical),
+            ),
+        );
+        let measured_size = ctx.run_measure(&mut self.text, axis, &child_fill);
+        // TODO: Subtract padding from available, if applicable.
+
+        let padding = PROSE_PADDING.get_axis_padding(axis);
+        measured_size + padding
+    }
+
+
     fn paint(&mut self, _ctx: &mut PaintCtx, _scene: &mut Scene) {
         // All painting is handled by the child
     }
@@ -180,7 +200,7 @@ mod tests {
                 .with_style(StyleProperty::FontSize(10.0))
                 .with_word_wrap(false),
         )
-        .with_clip(true);
+            .with_clip(true);
 
         let sized_box = Flex::row().with_child(SizedBox::new(prose).width(60.));
 

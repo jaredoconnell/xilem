@@ -3,7 +3,10 @@
 
 #![cfg(not(tarpaulin_include))]
 
+use std::collections::HashMap;
 use vello::kurbo::{Insets, Point, Rect, Size, Vec2};
+use crate::biaxial::BiAxial;
+use crate::widget::ContentFill;
 
 use crate::WidgetId;
 
@@ -144,6 +147,10 @@ pub(crate) struct WidgetState {
     /// Descendants of the focused widget are not in the focused path.
     pub(crate) has_focus: bool,
 
+    /// Stores measurement results. Should be cleared whenever it may become stale.
+    /// Ideally, let the widget invalidate it. Clear only on data change.
+    pub(crate) measurement_cache: HashMap<BiAxial<ContentFill>, f64>,
+
     // --- DEBUG INFO ---
     // TODO - document
     #[cfg(debug_assertions)]
@@ -190,6 +197,7 @@ impl WidgetState {
             focus_chain: Vec::new(),
             children_changed: true,
             update_focus_chain: true,
+            measurement_cache: HashMap::new(),
             #[cfg(debug_assertions)]
             widget_name,
         }
@@ -281,5 +289,17 @@ impl WidgetState {
 
     pub(crate) fn needs_render(&self) -> bool {
         self.needs_anim || self.needs_paint || self.needs_accessibility
+    }
+
+    pub(crate) fn save_measurement(&mut self, fill_mode: BiAxial<ContentFill>, result: f64) {
+        self.measurement_cache.insert(fill_mode, result);
+    }
+
+    pub(crate) fn get_cached_measurement(&self, fill_mode: &BiAxial<ContentFill>) -> Option<&f64> {
+        self.measurement_cache.get(fill_mode)
+    }
+
+    pub(crate) fn clear_cached_measurements(&mut self) {
+        self.measurement_cache.clear();
     }
 }

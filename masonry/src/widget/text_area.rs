@@ -20,12 +20,14 @@ use vello::Scene;
 use winit::keyboard::{Key, NamedKey};
 
 use crate::text::{BrushIndex, StyleProperty};
-use crate::widget::{Padding, WidgetMut};
+use crate::widget::{ContentFill, Padding, WidgetMut};
 use crate::{
     theme, AccessCtx, AccessEvent, BoxConstraints, CursorIcon, EventCtx, LayoutCtx, PaintCtx,
     PointerButton, PointerEvent, QueryCtx, RegisterCtx, TextEvent, Update, UpdateCtx, Widget,
     WidgetId,
 };
+use crate::axis::Axis;
+use crate::biaxial::BiAxial;
 
 /// `TextArea` implements the core of interactive text.
 ///
@@ -849,8 +851,8 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
         );
         let sub_bc = bc.shrink(padding_size);
 
-        let available_width = if bc.max().width.is_finite() {
-            Some((sub_bc.max().width) as f32)
+        let available_width = if bc.size().width.is_finite() {
+            Some(sub_bc.size().width as f32)
         } else {
             None
         };
@@ -881,6 +883,36 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
             width: text_size.width + padding_size.width,
         };
         bc.constrain(area_size)
+    }
+
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        // TODO: separate code-path for measure code for optimizations.
+        let max_advance = if !self.word_wrap {
+            None
+        } else {
+            match fill.horizontal {
+                ContentFill::Min => Some(0.0),
+                ContentFill::Max => None,
+                ContentFill::Constrain(horizontal_constraint) =>
+                    Some(horizontal_constraint as f32),
+                ContentFill::MaxStretch => return f64::INFINITY,
+            }
+        };
+        // Clone to prevent side effects like the measurement width messing up the layout of
+        // the actual text.
+        // As an alternative, you can save the last width and set it back to the prior value.
+        // I could not find any measurable difference.
+        let mut editor = self.editor.clone();
+        // TODO: Reduce duplication.
+        editor.set_width(max_advance);
+        let (fctx, lctx) = ctx.text_contexts();
+        let layout = editor.layout(fctx, lctx);
+        // For measure only measure the actual editor instead of returning the max advance
+        // like layout does.
+        match axis {
+            Axis::Horizontal => layout.width() as f64,
+            Axis::Vertical => layout.height() as f64,
+        }
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx, scene: &mut Scene) {

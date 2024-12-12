@@ -16,11 +16,13 @@ use vello::Scene;
 
 use crate::contexts::ComposeCtx;
 use crate::event::{AccessEvent, PointerEvent, TextEvent};
-use crate::widget::WidgetRef;
+use crate::widget::{ContentFill, WidgetRef};
 use crate::{
     AccessCtx, AsAny, BoxConstraints, EventCtx, LayoutCtx, PaintCtx, Point, QueryCtx, RegisterCtx,
     Size, Update, UpdateCtx,
 };
+use crate::axis::Axis;
+use crate::biaxial::BiAxial;
 
 /// A unique identifier for a single [`Widget`].
 ///
@@ -146,9 +148,11 @@ pub trait Widget: AsAny {
     ///
     /// **Container widgets should not add or remove children during layout.**
     /// Doing so is a logic error and may trigger a debug assertion.
-    ///
-    /// The layout strategy is strongly inspired by Flutter.
     fn layout(&mut self, ctx: &mut LayoutCtx, bc: &BoxConstraints) -> Size;
+
+    /// Called for pre-layout measurements during the layout pass.
+    /// TODO: More documentation.
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64;
 
     fn compose(&mut self, ctx: &mut ComposeCtx) {}
 
@@ -438,6 +442,10 @@ impl Widget for Box<dyn Widget> {
 
     fn layout(&mut self, ctx: &mut LayoutCtx, bc: &BoxConstraints) -> Size {
         self.deref_mut().layout(ctx, bc)
+    }
+
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        self.deref_mut().measure(ctx, axis, fill)
     }
 
     fn compose(&mut self, ctx: &mut ComposeCtx) {

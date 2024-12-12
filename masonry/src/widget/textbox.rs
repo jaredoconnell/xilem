@@ -10,11 +10,13 @@ use vello::kurbo::{Affine, Insets, Point, Rect, Size, Stroke};
 use vello::peniko::Color;
 use vello::Scene;
 
-use crate::widget::WidgetMut;
+use crate::widget::{ContentFill, WidgetMut};
 use crate::{
     AccessCtx, AccessEvent, BoxConstraints, EventCtx, LayoutCtx, PaintCtx, PointerEvent, QueryCtx,
     RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetId,
 };
+use crate::axis::Axis;
+use crate::biaxial::BiAxial;
 
 use super::{Padding, TextArea, WidgetPod};
 
@@ -137,6 +139,22 @@ impl Widget for Textbox {
             ctx.set_clip_path(Rect::from_origin_size(Point::ORIGIN, size));
         }
         size + margin_size
+    }
+
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        if fill.value_for_axis(axis) == ContentFill::MaxStretch {
+            return f64::INFINITY;
+        }
+        let child_fill = fill.shrink_constraints(
+            &BiAxial::new(
+                TEXTBOX_MARGIN.get_axis_padding(Axis::Horizontal),
+                TEXTBOX_MARGIN.get_axis_padding(Axis::Vertical),
+            ),
+        );
+        let measured_size = ctx.run_measure(&mut self.text, axis, &child_fill);
+
+        let margin = TEXTBOX_MARGIN.get_axis_padding(axis);
+        measured_size + margin
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx, scene: &mut Scene) {

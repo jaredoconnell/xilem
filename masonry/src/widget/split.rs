@@ -11,12 +11,13 @@ use vello::Scene;
 use crate::event::PointerButton;
 use crate::kurbo::Line;
 use crate::paint_scene_helpers::{fill_color, stroke};
-use crate::widget::flex::Axis;
-use crate::widget::{WidgetMut, WidgetPod};
+use crate::widget::{ContentFill, WidgetMut, WidgetPod};
 use crate::{
     theme, AccessCtx, AccessEvent, BoxConstraints, Color, CursorIcon, EventCtx, LayoutCtx,
     PaintCtx, Point, PointerEvent, QueryCtx, Rect, RegisterCtx, Size, TextEvent, Widget, WidgetId,
 };
+use crate::axis::Axis;
+use crate::biaxial::BiAxial;
 
 // TODO - Have child widget type as generic argument
 
@@ -410,20 +411,9 @@ impl Widget for Split {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx, bc: &BoxConstraints) -> Size {
-        match self.split_axis {
-            Axis::Horizontal => {
-                if !bc.is_width_bounded() {
-                    warn!("A Split widget was given an unbounded width to split.");
-                }
-            }
-            Axis::Vertical => {
-                if !bc.is_height_bounded() {
-                    warn!("A Split widget was given an unbounded height to split.");
-                }
-            }
-        }
+        // TODO: Add logic to measure for non-bounded input
 
-        let mut my_size = bc.max();
+        let mut my_size = bc.size();
         let bar_area = self.bar_area();
         let reduced_size = Size::new(
             (my_size.width - bar_area).max(0.),
@@ -452,12 +442,10 @@ impl Widget for Split {
                 let child2_width = (reduced_size.width - child1_width).max(0.0);
                 (
                     BoxConstraints::new(
-                        Size::new(child1_width, bc.min().height),
-                        Size::new(child1_width, bc.max().height),
+                        Size::new(child1_width, bc.size().height),
                     ),
                     BoxConstraints::new(
-                        Size::new(child2_width, bc.min().height),
-                        Size::new(child2_width, bc.max().height),
+                        Size::new(child2_width, bc.size().height),
                     ),
                 )
             }
@@ -468,12 +456,10 @@ impl Widget for Split {
                 let child2_height = (reduced_size.height - child1_height).max(0.0);
                 (
                     BoxConstraints::new(
-                        Size::new(bc.min().width, child1_height),
-                        Size::new(bc.max().width, child1_height),
+                        Size::new(bc.size().width, child1_height),
                     ),
                     BoxConstraints::new(
-                        Size::new(bc.min().width, child2_height),
-                        Size::new(bc.max().width, child2_height),
+                        Size::new(bc.size().width, child2_height),
                     ),
                 )
             }
@@ -505,6 +491,10 @@ impl Widget for Split {
         ctx.set_paint_insets(insets);
 
         my_size
+    }
+
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        todo!()
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx, scene: &mut Scene) {

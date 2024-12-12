@@ -10,12 +10,14 @@ use vello::kurbo::Rect;
 use vello::Scene;
 
 use crate::paint_scene_helpers::{fill_color, stroke};
-use crate::widget::{Axis, WidgetMut};
+use crate::widget::{ContentFill, WidgetMut};
 use crate::{
     theme, AccessCtx, AccessEvent, AllowRawMut, BoxConstraints, EventCtx, LayoutCtx, PaintCtx,
     Point, PointerEvent, QueryCtx, RegisterCtx, Size, TextEvent, Update, UpdateCtx, Widget,
     WidgetId,
 };
+use crate::axis::Axis;
+use crate::biaxial::BiAxial;
 
 // RULES
 // -
@@ -184,10 +186,19 @@ impl Widget for ScrollBar {
         let cursor_padding = theme::SCROLLBAR_PAD;
         self.axis
             .pack(
-                self.axis.major(bc.max()),
+                self.axis.major(bc.size()),
                 scrollbar_width + cursor_padding * 2.0,
             )
             .into()
+    }
+
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        // TODO: Consider fill case? This widget is inherently based on its parent's size.
+        if axis == self.axis {
+            0.0
+        } else {
+            theme::SCROLLBAR_WIDTH + theme::SCROLLBAR_PAD * 2.0
+        }
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx, scene: &mut Scene) {

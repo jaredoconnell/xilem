@@ -11,11 +11,13 @@ use vello::peniko::{Brush, Color, Fill};
 use vello::Scene;
 
 use crate::paint_scene_helpers::stroke;
-use crate::widget::{WidgetMut, WidgetPod};
+use crate::widget::{ContentFill, WidgetMut, WidgetPod};
 use crate::{
     AccessCtx, AccessEvent, BoxConstraints, EventCtx, LayoutCtx, PaintCtx, Point, PointerEvent,
     QueryCtx, RegisterCtx, Size, TextEvent, Widget, WidgetId,
 };
+use crate::axis::Axis;
+use crate::biaxial::BiAxial;
 
 // FIXME - Improve all doc in this module ASAP.
 
@@ -150,6 +152,13 @@ impl Padding {
             self.leading
         } else {
             self.trailing
+        }
+    }
+
+    pub const fn get_axis_padding(self, axis: Axis) -> f64 {
+        match axis {
+            Axis::Horizontal => self.leading + self.trailing,
+            Axis::Vertical => self.top + self.bottom,
         }
     }
 }
@@ -434,26 +443,24 @@ impl SizedBox {
 // --- MARK: INTERNALS ---
 impl SizedBox {
     fn child_constraints(&self, bc: &BoxConstraints) -> BoxConstraints {
+        // TODO: The logic of this likely must be changed for the new system.
         // if we don't have a width/height, we don't change that axis.
         // if we have a width/height, we clamp it on that axis.
-        let (min_width, max_width) = match self.width {
+        let (max_width) = match self.width {
             Some(width) => {
-                let w = width.max(bc.min().width).min(bc.max().width);
-                (w, w)
+                width.min(bc.size().width)
             }
-            None => (bc.min().width, bc.max().width),
+            None => bc.size().width,
         };
 
-        let (min_height, max_height) = match self.height {
+        let max_height = match self.height {
             Some(height) => {
-                let h = height.max(bc.min().height).min(bc.max().height);
-                (h, h)
+                height.min(bc.size().height)
             }
-            None => (bc.min().height, bc.max().height),
+            None => bc.size().height,
         };
 
         BoxConstraints::new(
-            Size::new(min_width, min_height),
             Size::new(max_width, max_height),
         )
     }
@@ -523,6 +530,42 @@ impl Widget for SizedBox {
         size
     }
 
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        match axis {
+            Axis::Horizontal => {
+                if let Some(width) = self.width {
+                    return width
+                }
+            },
+            Axis::Vertical => {
+                if let Some(height) = self.height {
+                    return height
+                }
+            },
+        }
+        let border_width = match &self.border {
+            Some(border) => border.width,
+            None => 0.0,
+        };
+        let mut child_size = match self.child.as_mut() {
+            Some(child) => {
+                // Shrink ContentFill if set to Constrain.
+                let child_fill = match &self.border {
+                    Some(border) => &fill.shrink_constraints(
+                        &BiAxial::new(
+                            2.0 * border.width + self.padding.leading + self.padding.trailing,
+                            2.0 * border.width + self.padding.top + self.padding.bottom,
+                        )
+                    ),
+                    None => fill,
+                };
+                ctx.run_measure(child, axis, child_fill)
+            }
+            None => 0.0
+        };
+        child_size + border_width * 2.0 + self.padding.get_axis_padding(axis)
+    }
+
     fn paint(&mut self, ctx: &mut PaintCtx, scene: &mut Scene) {
         let corner_radius = self.corner_radius;
 
@@ -586,18 +629,17 @@ mod tests {
     #[test]
     fn expand() {
         let expand = SizedBox::new(Label::new("hello!")).expand();
-        let bc = BoxConstraints::tight(Size::new(400., 400.)).loosen();
+        let bc = BoxConstraints::new(Size::new(400., 400.));
         let child_bc = expand.child_constraints(&bc);
-        assert_eq!(child_bc.min(), Size::new(400., 400.,));
+        assert_eq!(child_bc.size(), Size::new(400., 400.,));
     }
 
     #[test]
     fn no_width() {
         let expand = SizedBox::new(Label::new("hello!")).height(200.);
-        let bc = BoxConstraints::tight(Size::new(400., 400.)).loosen();
+        let bc = BoxConstraints::new(Size::new(400., 400.));
         let child_bc = expand.child_constraints(&bc);
-        assert_eq!(child_bc.min(), Size::new(0., 200.,));
-        assert_eq!(child_bc.max(), Size::new(400., 200.,));
+        assert_eq!(child_bc.size(), Size::new(400., 200.,));
     }
 
     #[test]

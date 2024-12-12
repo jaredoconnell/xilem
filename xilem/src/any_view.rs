@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use accesskit::{Node, Role};
-use masonry::widget::WidgetMut;
+use masonry::widget::{ContentFill, WidgetMut};
 use masonry::{
     AccessCtx, AccessEvent, BoxConstraints, EventCtx, LayoutCtx, PaintCtx, Point, PointerEvent,
     QueryCtx, RegisterCtx, Size, TextEvent, Widget, WidgetId, WidgetPod,
@@ -10,6 +10,8 @@ use masonry::{
 use smallvec::{smallvec, SmallVec};
 use tracing::{trace_span, Span};
 use vello::Scene;
+use masonry::axis::Axis;
+use masonry::biaxial::BiAxial;
 
 use crate::core::{AnyElement, AnyView, Mut, SuperElement};
 use crate::{Pod, ViewCtx};
@@ -86,6 +88,10 @@ impl Widget for DynWidget {
         let size = ctx.run_layout(&mut self.inner, bc);
         ctx.place_child(&mut self.inner, Point::ORIGIN);
         size
+    }
+
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        ctx.run_measure(&mut self.inner, axis, fill)
     }
 
     fn paint(&mut self, _ctx: &mut PaintCtx, _scene: &mut Scene) {}

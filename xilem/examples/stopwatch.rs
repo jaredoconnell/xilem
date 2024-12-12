@@ -10,15 +10,17 @@ use std::time::{Duration, SystemTime};
 
 use masonry::dpi::LogicalSize;
 use masonry::event_loop_runner::{EventLoop, EventLoopBuilder};
-use masonry::widget::{Axis, CrossAxisAlignment, MainAxisAlignment};
+use masonry::widget::{CrossAxisAlignment, MainAxisAlignment};
 use tokio::time;
 use tracing::warn;
+use vello::peniko::Brush;
 use winit::error::EventLoopError;
 use winit::window::Window;
+use masonry::text::ArcStr;
 use xilem::core::fork;
 use xilem::core::one_of::Either;
-use xilem::view::{button, flex, label, task, FlexSequence, FlexSpacer};
-use xilem::{WidgetView, Xilem};
+use xilem::view::{Axis, button, flex, label, task, FlexSequence, FlexSpacer, sized_box};
+use xilem::{Color, WidgetView, Xilem};
 
 /// The state of the entire application.
 ///
@@ -176,13 +178,21 @@ fn single_lap(
     .must_fill_major_axis(true)
 }
 
+fn big_button(
+    label: impl Into<ArcStr>,
+    color: impl Into<Color>,
+    callback: impl Fn(&mut Stopwatch) + Send + Sync + 'static,
+) -> impl WidgetView<Stopwatch> {
+    sized_box(button(label, callback)).width(65.).height(35.).border(color, 2)
+}
+
 fn start_stop_button(data: &mut Stopwatch) -> impl WidgetView<Stopwatch> {
     if data.active {
-        Either::A(button("Stop", |data: &mut Stopwatch| {
+        Either::A(big_button("Stop", Color::RED, |data: &mut Stopwatch| {
             data.stop();
         }))
     } else {
-        Either::B(button("Start", |data: &mut Stopwatch| {
+        Either::B(big_button("Start", Color::GREEN, |data: &mut Stopwatch| {
             data.start();
         }))
     }
@@ -190,11 +200,11 @@ fn start_stop_button(data: &mut Stopwatch) -> impl WidgetView<Stopwatch> {
 
 fn lap_reset_button(data: &mut Stopwatch) -> impl WidgetView<Stopwatch> {
     if data.active {
-        Either::A(button("  Lap  ", |data: &mut Stopwatch| {
+        Either::A(big_button("Lap", Color::GRAY, |data: &mut Stopwatch| {
             data.lap();
         }))
     } else {
-        Either::B(button("Reset", |data: &mut Stopwatch| {
+        Either::B(big_button("Reset", Color::YELLOW, |data: &mut Stopwatch| {
             data.reset();
         }))
     }

@@ -12,11 +12,13 @@ use vello::Scene;
 use crate::action::Action;
 use crate::paint_scene_helpers::{fill_lin_gradient, stroke, UnitPoint};
 use crate::text::ArcStr;
-use crate::widget::{Label, WidgetMut};
+use crate::widget::{ContentFill, Label, WidgetMut};
 use crate::{
     theme, AccessCtx, AccessEvent, BoxConstraints, EventCtx, LayoutCtx, PaintCtx, PointerEvent,
     QueryCtx, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetPod,
 };
+use crate::axis::Axis;
+use crate::biaxial::BiAxial;
 
 /// A checkbox that can be toggled.
 pub struct Checkbox {
@@ -133,6 +135,23 @@ impl Widget for Checkbox {
             ctx.child_baseline_offset(&self.label) + (our_size.height - label_size.height);
         ctx.set_baseline_offset(baseline);
         our_size
+    }
+
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        let check_size = theme::BASIC_WIDGET_HEIGHT;
+        let child_fill = fill.shrink_constraints(
+            &BiAxial::new(check_size, 0.0)
+        );
+        let label_measurement = ctx.run_measure(&mut self.label, axis, &child_fill);
+        match axis {
+            Axis::Horizontal => {
+                let x_padding = theme::WIDGET_CONTROL_COMPONENT_PADDING;
+                check_size + x_padding + label_measurement
+            },
+            Axis::Vertical => {
+                check_size.max(label_measurement)
+            }
+        }
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx, scene: &mut Scene) {

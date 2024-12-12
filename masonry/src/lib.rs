@@ -168,6 +168,8 @@ pub mod testing;
 pub mod text;
 pub mod theme;
 pub mod widget;
+pub mod biaxial;
+pub mod axis;
 
 pub use cursor_icon;
 pub use dpi;

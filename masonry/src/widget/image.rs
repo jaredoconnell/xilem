@@ -11,11 +11,13 @@ use vello::kurbo::Affine;
 use vello::peniko::{BlendMode, Image as ImageBuf};
 use vello::Scene;
 
-use crate::widget::{ObjectFit, WidgetMut};
+use crate::widget::{ContentFill, ObjectFit, WidgetMut};
 use crate::{
     AccessCtx, AccessEvent, BoxConstraints, EventCtx, LayoutCtx, PaintCtx, PointerEvent, QueryCtx,
     RegisterCtx, Size, TextEvent, Update, UpdateCtx, Widget, WidgetId,
 };
+use crate::axis::Axis;
+use crate::biaxial::BiAxial;
 
 // TODO - Resolve name collision between masonry::Image and peniko::Image
 
@@ -87,18 +89,18 @@ impl Widget for Image {
         // the image.
         let image_size = Size::new(self.image_data.width as f64, self.image_data.height as f64);
         if image_size.is_zero_area() {
-            let size = bc.min();
+            let size = bc.size();
             return size;
         }
         let image_aspect_ratio = image_size.height / image_size.width;
         match self.object_fit {
             ObjectFit::Contain => bc.constrain_aspect_ratio(image_aspect_ratio, image_size.width),
-            ObjectFit::Cover => Size::new(bc.max().width, bc.max().width * image_aspect_ratio),
-            ObjectFit::Fill => bc.max(),
+            ObjectFit::Cover => Size::new(bc.size().width, bc.size().width * image_aspect_ratio),
+            ObjectFit::Fill => bc.size(),
             ObjectFit::FitHeight => {
-                Size::new(bc.max().height / image_aspect_ratio, bc.max().height)
+                Size::new(bc.size().height / image_aspect_ratio, bc.size().height)
             }
-            ObjectFit::FitWidth => Size::new(bc.max().width, bc.max().width * image_aspect_ratio),
+            ObjectFit::FitWidth => Size::new(bc.size().width, bc.size().width * image_aspect_ratio),
             ObjectFit::None => image_size,
             ObjectFit::ScaleDown => {
                 let mut size = image_size;
@@ -108,6 +110,54 @@ impl Widget for Image {
                 }
 
                 size
+            }
+        }
+    }
+
+    fn measure(&mut self, _ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        let image_size = Size::new(self.image_data.width as f64, self.image_data.height as f64);
+
+        match self.object_fit {
+            ObjectFit::Contain | ObjectFit::ScaleDown if fill.both_axes_constrained() => {
+                let constraint_max = fill.constrain_aspect_ratio(image_size.aspect_ratio(), axis).unwrap();
+                if self.object_fit == ObjectFit::ScaleDown {
+                    // Prevent it from growing larger than the image's size.
+                    constraint_max.min(match axis {
+                        Axis::Horizontal => {image_size.width}
+                        Axis::Vertical => {image_size.height}
+                    })
+                } else {
+                    constraint_max
+                }
+            },
+            ObjectFit::FitHeight if axis == Axis::Horizontal => {
+                image_size.height / image_size.aspect_ratio()
+            },
+            ObjectFit::FitWidth if axis == Axis::Vertical => {
+                image_size.width * image_size.aspect_ratio()
+            }
+            ObjectFit::Fill if !fill.both_axes_constrained() => { // With `fill` it can shrink
+                0.0
+            }
+            ObjectFit::Cover if fill.horizontal_constrained() => { // Cover uses the height available, not the image's size.
+                if let ContentFill::Constrain(width_constraint) = fill.horizontal {
+                    match axis {
+                        Axis::Horizontal => width_constraint,
+                        Axis::Vertical => width_constraint * image_size.aspect_ratio(),
+                    }
+                } else {
+                    panic!("illegal state")
+                }
+            }
+            _ => {
+                match axis {
+                    Axis::Horizontal => {
+                        image_size.width
+                    },
+                    Axis::Vertical => {
+                        image_size.height
+                    }
+                }
             }
         }
     }
@@ -258,4 +308,6 @@ mod tests {
         let mut harness = TestHarness::create_with_size(image_widget, harness_size);
         assert_render_snapshot!(harness, "layout_scaledown");
     }
+
+    // TODO: Test measure
 }

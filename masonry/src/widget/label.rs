@@ -17,11 +17,13 @@ use vello::peniko::{BlendMode, Brush};
 use vello::Scene;
 
 use crate::text::{default_styles, render_text, ArcStr, BrushIndex, StyleProperty, StyleSet};
-use crate::widget::WidgetMut;
+use crate::widget::{ContentFill, WidgetMut};
 use crate::{
     theme, AccessCtx, AccessEvent, BoxConstraints, EventCtx, LayoutCtx, PaintCtx, PointerEvent,
     QueryCtx, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetId,
 };
+use crate::axis::Axis;
+use crate::biaxial::BiAxial;
 
 /// Added padding between each horizontal edge of the widget
 /// and the text in logical pixels.
@@ -333,8 +335,8 @@ impl Widget for Label {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx, bc: &BoxConstraints) -> Size {
-        let available_width = if bc.max().width.is_finite() {
-            Some(bc.max().width as f32 - 2. * LABEL_X_PADDING as f32)
+        let available_width = if bc.size().is_finite() {
+            Some(bc.size().width as f32 - 2. * LABEL_X_PADDING as f32)
         } else {
             None
         };
@@ -345,7 +347,7 @@ impl Widget for Label {
             None
         };
         let styles_changed = self.styles_changed;
-        if self.styles_changed {
+        if styles_changed {
             let (font_ctx, layout_ctx) = ctx.text_contexts();
             // TODO: Should we use a different scale?
             let mut builder = layout_ctx.ranged_builder(font_ctx, &self.text, 1.0);
@@ -393,6 +395,50 @@ impl Widget for Label {
             width: text_size.width + 2. * LABEL_X_PADDING,
         };
         bc.constrain(label_size)
+    }
+
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        // TODO: separate code-path for measure code for optimizations.
+        let max_advance = match fill.horizontal {
+            ContentFill::Min => Some(0.0),
+            ContentFill::Max => None,
+            ContentFill::Constrain(horizontal_constraint) =>
+                Some(horizontal_constraint as f32),
+            ContentFill::MaxStretch => return f64::INFINITY,
+        };
+
+        let styles_changed = self.styles_changed;
+        if styles_changed {
+            let (font_ctx, layout_ctx) = ctx.text_contexts();
+            // TODO: Should we use a different scale?
+            let mut builder = layout_ctx.ranged_builder(font_ctx, &self.text, 1.0);
+            for prop in self.styles.inner().values() {
+                builder.push_default(prop.to_owned());
+            }
+            builder.build_into(&mut self.text_layout, &self.text);
+            self.styles_changed = false;
+        }
+
+        // TODO: Reduce duplication.
+        // TODO: See if this causes any side effects.
+
+        // break_all_lines is required to check the size.
+        if !self.text.is_empty() { // Empty strings cause panic.
+            self.text_layout.break_all_lines(max_advance);
+        }
+        // For measure only measure the actual editor instead of returning the max advance
+        // like layout dies.
+        let measurement = match axis {
+            Axis::Horizontal => self.text_layout.width() as f64,
+            Axis::Vertical => self.text_layout.height() as f64,
+        };
+
+        // Revert max_advance in the layout
+        /*if max_advance != self.last_max_advance {
+            self.text_layout.break_all_lines(self.last_max_advance);
+        };*/
+
+        measurement
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx, scene: &mut Scene) {
@@ -544,7 +590,7 @@ mod tests {
                     Label::new("The quick brown fox jumps over the lazy dog")
                         .with_line_break_mode(LineBreaking::WordWrap),
                 )
-                .width(200.0),
+                    .width(200.0),
             )
             .with_spacer(20.0)
             .with_child(
@@ -552,7 +598,7 @@ mod tests {
                     Label::new("The quick brown fox jumps over the lazy dog")
                         .with_line_break_mode(LineBreaking::Clip),
                 )
-                .width(200.0),
+                    .width(200.0),
             )
             .with_spacer(20.0)
             .with_child(
@@ -560,7 +606,7 @@ mod tests {
                     Label::new("The quick brown fox jumps over the lazy dog")
                         .with_line_break_mode(LineBreaking::Overflow),
                 )
-                .width(200.0),
+                    .width(200.0),
             )
             .with_flex_spacer(1.0);
 

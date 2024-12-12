@@ -12,7 +12,7 @@
 
 use accesskit::{Node, Role};
 use masonry::kurbo::{BezPath, Stroke};
-use masonry::widget::{ObjectFit, RootWidget};
+use masonry::widget::{ContentFill, ObjectFit, RootWidget};
 use masonry::{
     AccessCtx, AccessEvent, Action, Affine, AppDriver, BoxConstraints, Color, DriverCtx, EventCtx,
     LayoutCtx, PaintCtx, Point, PointerEvent, QueryCtx, Rect, RegisterCtx, Size, TextEvent, Widget,
@@ -25,6 +25,8 @@ use tracing::{trace_span, Span};
 use vello::peniko::{Fill, Format, Image};
 use vello::Scene;
 use winit::window::Window;
+use masonry::axis::Axis;
+use masonry::biaxial::BiAxial;
 
 struct Driver;
 
@@ -55,8 +57,8 @@ impl Widget for CustomWidget {
         // using this, since always make sure the widget is bounded.
         // If bx.max() is used in a scrolling widget things will probably
         // not work correctly.
-        if bc.is_width_bounded() && bc.is_height_bounded() {
-            bc.max()
+        if bc.size().is_finite() {
+            bc.size()
         } else {
             let size = Size::new(100.0, 100.0);
             bc.constrain(size)
@@ -123,6 +125,23 @@ impl Widget for CustomWidget {
         let image_data = Image::new(image_data.into(), Format::Rgba8, 256, 256);
         let transform = ObjectFit::Fill.affine_to_fill(ctx.size(), size);
         scene.draw_image(&image_data, transform);
+    }
+
+    fn measure(&mut self, _ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        match fill.value_for_axis(axis) {
+            ContentFill::Min => {
+                0.0
+            }
+            ContentFill::Max => {
+                100.0
+            }
+            ContentFill::MaxStretch => {
+                f64::INFINITY
+            }
+            ContentFill::Constrain(constrained_value) => {
+                constrained_value
+            }
+        }
     }
 
     fn accessibility_role(&self) -> Role {

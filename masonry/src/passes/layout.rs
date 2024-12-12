@@ -5,6 +5,8 @@
 //! before any translations applied in [`compose`](crate::passes::compose).
 //! Most of the logic for this pass happens in [`Widget::layout`] implementations.
 
+use std::ops::Sub;
+use std::time::{SystemTime, UNIX_EPOCH};
 use dpi::LogicalSize;
 use smallvec::SmallVec;
 use tracing::{info_span, trace};
@@ -12,8 +14,10 @@ use vello::kurbo::{Point, Rect, Size};
 
 use crate::passes::{enter_span_if, recurse_on_children};
 use crate::render_root::{RenderRoot, RenderRootSignal, WindowSizePolicy};
-use crate::widget::WidgetState;
+use crate::widget::{ContentFill, WidgetState};
 use crate::{BoxConstraints, LayoutCtx, Widget, WidgetPod};
+use crate::axis::Axis;
+use crate::biaxial::BiAxial;
 
 // --- MARK: RUN LAYOUT ---
 /// Run [`Widget::layout`] method on the widget contained in `pod`.
@@ -106,6 +110,7 @@ pub(crate) fn run_layout_on<W: Widget>(
         // TODO - If constraints are the same and request_layout isn't set,
         // skip calling layout
         inner_ctx.widget_state.request_layout = false;
+        //inner_ctx.widget_state.clear_cached_measurements();
         widget.item.layout(&mut inner_ctx, bc)
     };
     if state.item.request_layout {
@@ -214,6 +219,41 @@ pub(crate) fn run_layout_on<W: Widget>(
     new_size
 }
 
+// --- MARK: RUN MEASURE ---
+/// Run [`Widget::measure`] method on the widget contained in `pod`.
+/// This will be called by [`LayoutCtx::run_measure`], which is itself called in the parent
+/// widget's `layout` or `measure.
+pub(crate) fn run_measure_on<W: Widget>(
+    parent_ctx: &mut LayoutCtx<'_>,
+    pod: &mut WidgetPod<W>,
+    axis: Axis,
+    fill: &BiAxial<ContentFill>,
+) -> f64 {
+
+    let id = pod.id();
+    let mut widget = parent_ctx.widget_children.get_child_mut(id).unwrap();
+    let mut state = parent_ctx.widget_state_children.get_child_mut(id).unwrap();
+
+    // Check cache
+    //if let Some(cached_size) = state.item.get_cached_measurement(fill) {
+        //println!("Cache hit for fill {}", fill);
+        //return *cached_size;
+    //}
+    //println!("Cache miss for fill {}", fill);
+
+    let mut inner_ctx = LayoutCtx {
+        widget_state: state.item,
+        widget_state_children: state.children.reborrow_mut(),
+        widget_children: widget.children,
+        global_state: parent_ctx.global_state,
+    };
+
+    // Cache based on the input params. Cache should be cleared when
+    let result = widget.item.measure(&mut inner_ctx, axis, fill);
+    //state.item.save_measurement(*fill, result);
+    result
+}
+
 // --- MARK: ROOT ---
 pub(crate) fn run_layout_pass(root: &mut RenderRoot) {
     if !root.root_state().needs_layout {
@@ -225,8 +265,8 @@ pub(crate) fn run_layout_pass(root: &mut RenderRoot) {
 
     let window_size = root.get_kurbo_size();
     let bc = match root.size_policy {
-        WindowSizePolicy::User => BoxConstraints::tight(window_size),
-        WindowSizePolicy::Content => BoxConstraints::UNBOUNDED,
+        WindowSizePolicy::User => BoxConstraints::new(window_size),
+        WindowSizePolicy::Content => panic!("not implemented"), // Use measure to get a definite window size
     };
 
     let mut dummy_state = WidgetState::synthetic(root.root.id(), root.get_kurbo_size());
@@ -238,8 +278,10 @@ pub(crate) fn run_layout_pass(root: &mut RenderRoot) {
         widget_state_children: root_state_token,
         widget_children: root_widget_token,
     };
-
+    //let start = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
     let size = run_layout_on(&mut ctx, &mut root.root, &bc);
+    //let end = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+    //println!("{} ms for layout with size {}.", end.sub(start).as_millis(), size);
     ctx.place_child(&mut root.root, Point::ORIGIN);
 
     if let WindowSizePolicy::Content = root.size_policy {

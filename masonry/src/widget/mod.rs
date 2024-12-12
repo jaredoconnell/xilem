@@ -32,12 +32,14 @@ mod text_area;
 mod textbox;
 mod variable_label;
 mod widget_arena;
+mod content_fill;
 
 pub use self::image::Image;
 pub use align::Align;
 pub use button::Button;
 pub use checkbox::Checkbox;
-pub use flex::{Axis, CrossAxisAlignment, Flex, FlexParams, MainAxisAlignment};
+pub use content_fill::ContentFill;
+pub use flex::{CrossAxisAlignment, Flex, FlexParams, MainAxisAlignment};
 pub use grid::{Grid, GridParams};
 pub use label::{Label, LineBreaking};
 pub use portal::Portal;

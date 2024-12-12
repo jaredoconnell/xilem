@@ -12,11 +12,13 @@ use crate::action::Action;
 use crate::event::PointerButton;
 use crate::paint_scene_helpers::{fill_lin_gradient, stroke, UnitPoint};
 use crate::text::ArcStr;
-use crate::widget::{Label, WidgetMut, WidgetPod};
+use crate::widget::{ContentFill, Label, WidgetMut, WidgetPod};
 use crate::{
     theme, AccessCtx, AccessEvent, BoxConstraints, EventCtx, Insets, LayoutCtx, PaintCtx,
     PointerEvent, QueryCtx, Size, TextEvent, Update, UpdateCtx, Widget, WidgetId,
 };
+use crate::axis::Axis;
+use crate::biaxial::BiAxial;
 
 // the minimum padding added to a button.
 // NOTE: these values are chosen to match the existing look of TextBox; these
@@ -127,9 +129,14 @@ impl Widget for Button {
 
     fn layout(&mut self, ctx: &mut LayoutCtx, bc: &BoxConstraints) -> Size {
         let padding = Size::new(LABEL_INSETS.x_value(), LABEL_INSETS.y_value());
-        let label_bc = bc.shrink(padding).loosen();
+        let label_bc = bc.shrink(padding);
 
-        let label_size = ctx.run_layout(&mut self.label, &label_bc);
+        let fill = BiAxial::new(ContentFill::Constrain(label_bc.size().width), ContentFill::Constrain(label_bc.size().height));
+        let measured_width = ctx.run_measure(&mut self.label, Axis::Horizontal, &fill);
+        let measured_height = ctx.run_measure(&mut self.label, Axis::Vertical, &fill);
+
+        // TODO: Determine if there is a way to use align for this.
+        let label_size = ctx.run_layout(&mut self.label, &BoxConstraints::new(Size::new(measured_width, measured_height)));
 
         let baseline = ctx.child_baseline_offset(&self.label);
         ctx.set_baseline_offset(baseline + LABEL_INSETS.y1);
@@ -147,6 +154,19 @@ impl Widget for Button {
         ctx.place_child(&mut self.label, label_offset.to_point());
 
         button_size
+    }
+
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        let on_axis_padding = match axis {
+            Axis::Horizontal => LABEL_INSETS.x_value(),
+            Axis::Vertical => LABEL_INSETS.y_value(),
+        };
+        let child_fill = fill.shrink_constraints(
+            &BiAxial::new(LABEL_INSETS.x_value(), LABEL_INSETS.y_value())
+        );
+        // Use a shrunken fill for the child, then add the padding back for the final size.
+        let label_width = ctx.run_measure(&mut self.label, axis, &child_fill);
+        label_width + on_axis_padding
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx, scene: &mut Scene) {
@@ -278,4 +298,6 @@ mod tests {
         // We don't use assert_eq because we don't want rich assert
         assert!(image_1 == image_2);
     }
+
+    // TODO: Test measure
 }

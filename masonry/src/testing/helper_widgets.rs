@@ -20,11 +20,13 @@ use widget::widget::get_child_at_pos;
 use widget::WidgetRef;
 
 use crate::event::{PointerEvent, TextEvent};
-use crate::widget::SizedBox;
+use crate::widget::{ContentFill, SizedBox};
 
 // TODO: Expect doesn't work here
 #[allow(clippy::wildcard_imports, reason = "Deferred: Noisy")]
 use crate::*;
+use crate::axis::Axis;
+use crate::biaxial::BiAxial;
 
 pub type PointerEventFn<S> = dyn FnMut(&mut S, &mut EventCtx, &PointerEvent);
 pub type TextEventFn<S> = dyn FnMut(&mut S, &mut EventCtx, &TextEvent);
@@ -33,6 +35,7 @@ pub type AnimFrameFn<S> = dyn FnMut(&mut S, &mut UpdateCtx, u64);
 pub type RegisterChildrenFn<S> = dyn FnMut(&mut S, &mut RegisterCtx);
 pub type UpdateFn<S> = dyn FnMut(&mut S, &mut UpdateCtx, &Update);
 pub type LayoutFn<S> = dyn FnMut(&mut S, &mut LayoutCtx, &BoxConstraints) -> Size;
+pub type MeasureFn<S> = dyn FnMut(&mut S, &mut LayoutCtx, Axis, &BiAxial<ContentFill>) -> f64;
 pub type ComposeFn<S> = dyn FnMut(&mut S, &mut ComposeCtx);
 pub type PaintFn<S> = dyn FnMut(&mut S, &mut PaintCtx, &mut Scene);
 pub type RoleFn<S> = dyn Fn(&S) -> Role;
@@ -57,6 +60,7 @@ pub struct ModularWidget<S> {
     register_children: Option<Box<RegisterChildrenFn<S>>>,
     update: Option<Box<UpdateFn<S>>>,
     layout: Option<Box<LayoutFn<S>>>,
+    measure: Option<Box<MeasureFn<S>>>,
     compose: Option<Box<ComposeFn<S>>>,
     paint: Option<Box<PaintFn<S>>>,
     role: Option<Box<RoleFn<S>>>,
@@ -114,6 +118,7 @@ pub enum Record {
     RC,
     U(Update),
     Layout(Size),
+    Measure(f64),
     Compose,
     Paint,
     Access,
@@ -141,7 +146,7 @@ impl<S> ModularWidget<S> {
     /// Create a new `ModularWidget`.
     ///
     /// By default none of its methods do anything, and its layout method returns
-    /// a static 100x100 size.
+    /// a static 100x100 size, with measure returning 100.0.
     pub fn new(state: S) -> Self {
         ModularWidget {
             state,
@@ -155,6 +160,7 @@ impl<S> ModularWidget<S> {
             register_children: None,
             update: None,
             layout: None,
+            measure: None,
             compose: None,
             paint: None,
             role: None,
@@ -332,6 +338,18 @@ impl<S: 'static> Widget for ModularWidget<S> {
             .unwrap_or_else(|| Size::new(100., 100.))
     }
 
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        let ModularWidget {
+            ref mut state,
+            ref mut measure,
+            ..
+        } = self;
+        measure
+            .as_mut()
+            .map(|f| f(state, ctx, axis, fill))
+            .unwrap_or_else(|| 100.0)
+    }
+
     fn compose(&mut self, ctx: &mut ComposeCtx) {
         if let Some(f) = self.compose.as_mut() {
             f(&mut self.state, ctx);
@@ -457,6 +475,10 @@ impl Widget for ReplaceChild {
         ctx.run_layout(&mut self.child, bc)
     }
 
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        ctx.run_measure(&mut self.child, axis, fill)
+    }
+
     fn compose(&mut self, _ctx: &mut ComposeCtx) {}
 
     fn paint(&mut self, _ctx: &mut PaintCtx, _scene: &mut Scene) {}
@@ -540,6 +562,12 @@ impl<W: Widget> Widget for Recorder<W> {
     fn layout(&mut self, ctx: &mut LayoutCtx, bc: &BoxConstraints) -> Size {
         let size = self.child.layout(ctx, bc);
         self.recording.push(Record::Layout(size));
+        size
+    }
+
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        let size = self.child.measure(ctx, axis, fill);
+        self.recording.push(Record::Measure(size));
         size
     }
 

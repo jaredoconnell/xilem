@@ -15,12 +15,14 @@ use vello::peniko::Color;
 use winit::window::ResizeDirection;
 
 use crate::action::Action;
-use crate::passes::layout::run_layout_on;
+use crate::passes::layout::{run_layout_on, run_measure_on};
 use crate::render_root::{MutateCallback, RenderRootSignal, RenderRootState};
 use crate::text::BrushIndex;
 use crate::theme::get_debug_color;
-use crate::widget::{WidgetMut, WidgetRef, WidgetState};
+use crate::widget::{ContentFill, WidgetMut, WidgetRef, WidgetState};
 use crate::{AllowRawMut, BoxConstraints, Insets, Point, Rect, Size, Widget, WidgetId, WidgetPod};
+use crate::axis::Axis;
+use crate::biaxial::BiAxial;
 
 // Note - Most methods defined in this file revolve around `WidgetState` fields.
 // Consider reading `WidgetState` documentation (especially the documented naming scheme)
@@ -929,6 +931,13 @@ impl LayoutCtx<'_> {
     pub fn run_layout<W: Widget>(&mut self, child: &mut WidgetPod<W>, bc: &BoxConstraints) -> Size {
         run_layout_on(self, child, bc)
     }
+
+    // TODO: Documentation
+    pub fn run_measure<W: Widget>(&mut self, child: &mut WidgetPod<W>, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        run_measure_on(self, child, axis, fill)
+    }
+
+
 
     /// Set explicit paint [`Insets`] for this widget.
     ///

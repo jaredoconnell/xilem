@@ -10,6 +10,9 @@ use masonry::{
 };
 use smallvec::{smallvec, SmallVec};
 use vello::Scene;
+use masonry::axis::Axis;
+use masonry::biaxial::BiAxial;
+use masonry::widget::ContentFill;
 
 use crate::core::one_of::OneOf;
 use crate::core::Mut;
@@ -236,6 +239,20 @@ impl<
                 ctx.place_child(w, Point::ORIGIN);
                 size
             }
+        }
+    }
+
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        match self {
+            OneOfWidget::A(w) => ctx.run_measure(w, axis, fill),
+            OneOfWidget::B(w) => ctx.run_measure(w, axis, fill),
+            OneOfWidget::C(w) => ctx.run_measure(w, axis, fill),
+            OneOfWidget::D(w) => ctx.run_measure(w, axis, fill),
+            OneOfWidget::E(w) => ctx.run_measure(w, axis, fill),
+            OneOfWidget::F(w) => ctx.run_measure(w, axis, fill),
+            OneOfWidget::G(w) => ctx.run_measure(w, axis, fill),
+            OneOfWidget::H(w) => ctx.run_measure(w, axis, fill),
+            OneOfWidget::I(w) => ctx.run_measure(w, axis, fill),
         }
     }
 

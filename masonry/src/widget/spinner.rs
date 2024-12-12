@@ -11,12 +11,14 @@ use tracing::{trace_span, Span};
 use vello::kurbo::{Affine, Cap, Line, Stroke};
 use vello::Scene;
 
-use crate::widget::WidgetMut;
+use crate::widget::{ContentFill, WidgetMut};
 use crate::{
     theme, AccessCtx, AccessEvent, BoxConstraints, Color, EventCtx, LayoutCtx, PaintCtx, Point,
     PointerEvent, QueryCtx, RegisterCtx, Size, TextEvent, Update, UpdateCtx, Vec2, Widget,
     WidgetId,
 };
+use crate::axis::Axis;
+use crate::biaxial::BiAxial;
 
 /// An animated spinner widget for showing a loading state.
 ///
@@ -97,14 +99,16 @@ impl Widget for Spinner {
     }
 
     fn layout(&mut self, _ctx: &mut LayoutCtx, bc: &BoxConstraints) -> Size {
-        if bc.is_width_bounded() && bc.is_height_bounded() {
-            bc.max()
-        } else {
-            bc.constrain(Size::new(
+        bc.size()
+        // TODO: Move this logic to measure
+        /*    bc.constrain(Size::new(
                 theme::BASIC_WIDGET_HEIGHT,
                 theme::BASIC_WIDGET_HEIGHT,
-            ))
-        }
+            ))*/
+    }
+
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        0.0
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx, scene: &mut Scene) {

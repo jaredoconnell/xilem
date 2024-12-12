@@ -15,11 +15,13 @@ use vello::Scene;
 
 use crate::contexts::AccessCtx;
 use crate::paint_scene_helpers::UnitPoint;
-use crate::widget::WidgetPod;
+use crate::widget::{ContentFill, WidgetPod};
 use crate::{
-    AccessEvent, BoxConstraints, EventCtx, LayoutCtx, PaintCtx, PointerEvent, QueryCtx, Rect,
-    RegisterCtx, Size, TextEvent, Widget, WidgetId,
+    AccessEvent, axis, BoxConstraints, EventCtx, LayoutCtx, PaintCtx, PointerEvent, QueryCtx,
+    Rect, RegisterCtx, Size, TextEvent, Widget, WidgetId,
 };
+use crate::axis::Axis;
+use crate::biaxial::BiAxial;
 
 // TODO - Have child widget type as generic argument
 
@@ -96,28 +98,26 @@ impl Widget for Align {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx, bc: &BoxConstraints) -> Size {
-        let size = ctx.run_layout(&mut self.child, &bc.loosen());
+        // TODO: Used to use loosen. Instead, measure the child first and use the result of that
+        //  to send a definite size to the child widget.
+        let fill = BiAxial::new(ContentFill::Constrain(bc.size().width), ContentFill::Constrain(bc.size().height));
+        let measured_width = ctx.run_measure(&mut self.child, Axis::Horizontal, &fill);
+        let measured_height = ctx.run_measure(&mut self.child, Axis::Vertical, &fill);
+        let child_size = ctx.run_layout(&mut self.child, &BoxConstraints::new(Size::new(measured_width, measured_height)));
 
-        log_size_warnings(size);
+        log_size_warnings(child_size);
 
-        let mut my_size = size;
-        if bc.is_width_bounded() {
-            my_size.width = bc.max().width;
-        }
-        if bc.is_height_bounded() {
-            my_size.height = bc.max().height;
-        }
-
+        let mut my_size = child_size;
         if let Some(width) = self.width_factor {
-            my_size.width = size.width * width;
+            my_size.width = child_size.width * width;
         }
         if let Some(height) = self.height_factor {
-            my_size.height = size.height * height;
+            my_size.height = child_size.height * height;
         }
 
         my_size = bc.constrain(my_size);
-        let extra_width = (my_size.width - size.width).max(0.);
-        let extra_height = (my_size.height - size.height).max(0.);
+        let extra_width = (my_size.width - child_size.width).max(0.);
+        let extra_height = (my_size.height - child_size.height).max(0.);
         let origin = self
             .align
             .resolve(Rect::new(0., 0., extra_width, extra_height))
@@ -134,6 +134,12 @@ impl Widget for Align {
         }
 
         my_size
+    }
+
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        let child_size = ctx.run_measure(&mut self.child, axis, fill);
+        child_size
+        // TODO: Consider width and height factors.
     }
 
     fn paint(&mut self, _ctx: &mut PaintCtx, _scene: &mut Scene) {}

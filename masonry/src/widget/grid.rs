@@ -7,11 +7,14 @@ use tracing::{trace_span, Span};
 use vello::kurbo::{Affine, Line, Stroke};
 use vello::Scene;
 
-use crate::widget::WidgetMut;
+use crate::theme::get_debug_color;
+use crate::widget::{ContentFill, WidgetMut};
 use crate::{
     AccessCtx, AccessEvent, BoxConstraints, EventCtx, LayoutCtx, PaintCtx, Point, PointerEvent,
     QueryCtx, Size, TextEvent, Widget, WidgetId, WidgetPod,
 };
+use crate::axis::Axis;
+use crate::biaxial::BiAxial;
 
 pub struct Grid {
     children: Vec<Child>,
@@ -260,7 +263,7 @@ impl Widget for Grid {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx, bc: &BoxConstraints) -> Size {
-        let total_size = bc.max();
+        let total_size = bc.size();
         if !total_size.is_finite() {
             debug_panic!(
                 "Error while computing layout for grid; infinite BoxConstraint max provided {}",
@@ -274,7 +277,7 @@ impl Widget for Grid {
                 (child.width as f64 * width_unit - self.grid_spacing).max(0.0),
                 (child.height as f64 * height_unit - self.grid_spacing).max(0.0),
             );
-            let child_bc = BoxConstraints::new(cell_size, cell_size);
+            let child_bc = BoxConstraints::new(cell_size);
             let _ = ctx.run_layout(&mut child.widget, &child_bc);
             ctx.place_child(
                 &mut child.widget,
@@ -282,6 +285,12 @@ impl Widget for Grid {
             );
         }
         total_size
+    }
+
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        // TODO: Replace with meaningful measurement.
+        //  measure all items, and add up the max sizes for each column or row.
+        return 150.0;
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx, scene: &mut Scene) {

@@ -14,12 +14,11 @@ use vello::peniko::{Blob, Image};
 use winit::dpi::LogicalSize;
 use winit::error::EventLoopError;
 use winit::window::Window;
+use masonry::axis::Axis;
+use masonry::widget::CrossAxisAlignment;
 use xilem::core::fork;
 use xilem::core::one_of::OneOf3;
-use xilem::view::{
-    button, flex, image, inline_prose, portal, prose, sized_box, spinner, worker, Axis, FlexExt,
-    FlexSpacer, Padding,
-};
+use xilem::view::{button, flex, image, inline_prose, portal, prose, sized_box, spinner, worker, FlexExt, FlexSpacer, Padding};
 use xilem::{Color, EventLoop, EventLoopBuilder, TextAlignment, WidgetView, Xilem};
 
 /// The main state of the application.
@@ -47,13 +46,17 @@ enum ImageState {
 
 impl HttpCats {
     fn view(&mut self) -> impl WidgetView<HttpCats> {
-        let left_column = sized_box(portal(flex((
-            prose("Status"),
-            self.statuses
-                .iter_mut()
-                .map(Status::list_view)
-                .collect::<Vec<_>>(),
-        ))))
+        let left_column = sized_box(
+            portal(
+                flex((
+                    prose("Status"),
+                    self.statuses
+                        .iter_mut()
+                        .map(Status::list_view)
+                        .collect::<Vec<_>>(),
+                )).cross_axis_alignment(CrossAxisAlignment::Fill),
+            )
+        )
         .padding(Padding::leading(5.));
 
         let (info_area, worker_value) = if let Some(selected_code) = self.selected_code {

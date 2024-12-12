@@ -11,11 +11,13 @@ use tracing::{trace_span, Span};
 use vello::kurbo::{Point, Rect, Size, Vec2};
 use vello::Scene;
 
-use crate::widget::{Axis, ScrollBar, WidgetMut};
+use crate::widget::{ContentFill, ScrollBar, WidgetMut};
 use crate::{
     AccessCtx, AccessEvent, BoxConstraints, ComposeCtx, EventCtx, LayoutCtx, PaintCtx,
     PointerEvent, QueryCtx, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetPod,
 };
+use crate::axis::Axis;
+use crate::biaxial::BiAxial;
 
 // TODO - refactor - see https://github.com/linebender/xilem/issues/366
 // TODO - rename "Portal" to "ScrollPortal"?
@@ -359,11 +361,27 @@ impl<W: Widget> Widget for Portal<W> {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx, bc: &BoxConstraints) -> Size {
-        // TODO - How Portal handles BoxConstraints is due for a rework
-        let min_child_size = if self.must_fill { bc.min() } else { Size::ZERO };
-        let max_child_size = bc.max();
+        let vertical_measurement = ctx.run_measure(&mut self.child, Axis::Vertical, &BiAxial::new(
+            if self.constrain_horizontal {
+                ContentFill::Constrain(bc.size().width)
+            } else {
+                ContentFill::Max
+            },
+            if self.constrain_vertical {
+                ContentFill::Constrain(bc.size().height)
+            } else {
+                ContentFill::Max
+            },
+        ));
 
-        let child_bc = BoxConstraints::new(min_child_size, max_child_size);
+
+        // TODO - How Portal handles BoxConstraints is due for a rework
+        let max_child_size = Size::new(
+            bc.size().width,
+            vertical_measurement,
+        );
+
+        let child_bc = BoxConstraints::new(max_child_size);
 
         let content_size = ctx.run_layout(&mut self.child, &child_bc);
         let portal_size = bc.constrain(content_size);
@@ -423,6 +441,28 @@ impl<W: Widget> Widget for Portal<W> {
         }
 
         portal_size
+    }
+
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        let fill_type = fill.value_for_axis(axis);
+        if fill_type == ContentFill::MaxStretch {
+            return f64::INFINITY;
+        }
+        let unconstrained_fill = fill.set_for_axis(axis, ContentFill::Max);
+        let unconstrained_child_size = ctx.run_measure(&mut self.child, axis, &unconstrained_fill);
+        match fill_type {
+            ContentFill::Min | ContentFill::Max => {unconstrained_child_size}
+            ContentFill::Constrain(limit) => {
+                if unconstrained_child_size > limit {
+                    limit // Since it will just scroll to account for the larger size.
+                } else {
+                    unconstrained_child_size
+                }
+            }
+            ContentFill::MaxStretch => {
+                panic!("got value that was supposed to be handled earlier")
+            }
+        }
     }
 
     fn compose(&mut self, ctx: &mut ComposeCtx) {

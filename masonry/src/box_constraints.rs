@@ -23,18 +23,10 @@ use vello::kurbo::Size;
 /// [rounded away from zero]: Size::expand
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BoxConstraints {
-    min: Size,
-    max: Size,
+    exact: Size,
 }
 
 impl BoxConstraints {
-    /// An unbounded box constraints object.
-    ///
-    /// Can be satisfied by any nonnegative size.
-    pub const UNBOUNDED: BoxConstraints = BoxConstraints {
-        min: Size::ZERO,
-        max: Size::new(f64::INFINITY, f64::INFINITY),
-    };
 
     /// Create a new box constraints object.
     ///
@@ -44,36 +36,9 @@ impl BoxConstraints {
     /// so that the layout is aligned to integers.
     ///
     /// [rounded away from zero]: Size::expand
-    pub fn new(min: Size, max: Size) -> BoxConstraints {
+    pub fn new(exact: Size) -> BoxConstraints {
         BoxConstraints {
-            min: min.expand(),
-            max: max.expand(),
-        }
-    }
-
-    /// Create a "tight" box constraints object.
-    ///
-    /// A "tight" constraint can only be satisfied by a single size.
-    ///
-    /// The given size is also [rounded away from zero],
-    /// so that the layout is aligned to integers.
-    ///
-    /// [rounded away from zero]: Size::expand
-    pub fn tight(size: Size) -> BoxConstraints {
-        let size = size.expand();
-        BoxConstraints {
-            min: size,
-            max: size,
-        }
-    }
-
-    /// Create a "loose" version of the constraints.
-    ///
-    /// Make a version with zero minimum size, but the same maximum size.
-    pub fn loosen(&self) -> BoxConstraints {
-        BoxConstraints {
-            min: Size::ZERO,
-            max: self.max,
+            exact: exact.expand(),
         }
     }
 
@@ -84,27 +49,14 @@ impl BoxConstraints {
     ///
     /// [rounded away from zero]: Size::expand
     pub fn constrain(&self, size: impl Into<Size>) -> Size {
-        size.into().expand().clamp(self.min, self.max)
+        // TODO: Determine desired logic for this.
+        // Size::new(0.0, 0.0),
+        size.into().expand().clamp(self.exact, self.exact)
     }
 
     /// Returns the max size of these constraints.
-    pub fn max(&self) -> Size {
-        self.max
-    }
-
-    /// Returns the min size of these constraints.
-    pub fn min(&self) -> Size {
-        self.min
-    }
-
-    /// Whether there is an upper bound on the width.
-    pub fn is_width_bounded(&self) -> bool {
-        self.max.width.is_finite()
-    }
-
-    /// Whether there is an upper bound on the height.
-    pub fn is_height_bounded(&self) -> bool {
-        self.max.height.is_finite()
+    pub fn size(&self) -> Size {
+        self.exact
     }
 
     /// Check to see if these constraints are legit.
@@ -115,38 +67,32 @@ impl BoxConstraints {
             return;
         }
 
-        if self.min.width.is_nan() {
-            debug_panic!("Minimum width constraint passed to {name} is NaN");
+        if self.exact.width.is_nan() {
+            debug_panic!("Width constraint passed to {name} is NaN");
         }
-        if self.min.height.is_nan() {
-            debug_panic!("Minimum height constraint passed to {name} is NaN");
+        if self.exact.height.is_nan() {
+            debug_panic!("Height constraint passed to {name} is NaN");
         }
-        if self.max.width.is_nan() {
-            debug_panic!("Maximum width constraint passed to {name} is NaN");
+        if self.exact.width.is_infinite() {
+            debug_panic!("Infinite width constraint passed to {name}");
         }
-        if self.max.height.is_nan() {
-            debug_panic!("Maximum height constraint passed to {name} is NaN");
+        if self.exact.height.is_infinite() {
+            debug_panic!("Infinite height constraint passed to {name}");
+        }
+        if self.exact.width < 0.0 {
+            debug_panic!("Negative width constraint passed to {name}");
+        }
+        if self.exact.height < 0.0 {
+            debug_panic!("Negative height constraint passed to {name}");
         }
 
-        if self.min.width.is_infinite() {
-            debug_panic!("Infinite minimum width constraint passed to {name}");
-        }
-        if self.min.height.is_infinite() {
-            debug_panic!("Infinite minimum height constraint passed to {name}");
-        }
-
-        if !(0.0 <= self.min.width
-            && self.min.width <= self.max.width
-            && 0.0 <= self.min.height
-            && self.min.height <= self.max.height
-            && self.min.expand() == self.min
-            && self.max.expand() == self.max)
+        if !(self.exact.expand() == self.exact)
         {
-            debug_panic!("Bad BoxConstraints passed to {name}: {self:?}",);
+            debug_panic!("Unexpanded BoxConstraints passed to {name}: {self:?}",);
         }
     }
 
-    /// Shrink min and max constraints by size
+    /// Shrink constraints by size
     ///
     /// The given size is also [rounded away from zero],
     /// so that the layout is aligned to integers.
@@ -154,23 +100,19 @@ impl BoxConstraints {
     /// [rounded away from zero]: Size::expand
     pub fn shrink(&self, diff: impl Into<Size>) -> BoxConstraints {
         let diff = diff.into().expand();
-        let min = Size::new(
-            (self.min().width - diff.width).max(0.),
-            (self.min().height - diff.height).max(0.),
-        );
-        let max = Size::new(
-            (self.max().width - diff.width).max(0.),
-            (self.max().height - diff.height).max(0.),
+        let new_size = Size::new(
+            (self.size().width - diff.width).max(0.),
+            (self.size().height - diff.height).max(0.),
         );
 
-        BoxConstraints::new(min, max)
+        BoxConstraints::new(new_size)
     }
 
     /// Test whether these constraints contain the given `Size`.
     pub fn contains(&self, size: impl Into<Size>) -> bool {
         let size = size.into();
-        (self.min.width <= size.width && size.width <= self.max.width)
-            && (self.min.height <= size.height && size.height <= self.max.height)
+        (size.width <= self.exact.width)
+            && (size.height <= self.exact.height)
     }
 
     /// Find the `Size` within these `BoxConstraint`s that minimises the difference between the
@@ -187,10 +129,7 @@ impl BoxConstraints {
     pub fn constrain_aspect_ratio(&self, aspect_ratio: f64, width: f64) -> Size {
         // Minimizing/maximizing based on aspect ratio seems complicated, but in reality everything
         // is linear, so the amount of work to do is low.
-        let ideal_size = Size {
-            width,
-            height: width * aspect_ratio,
-        };
+        let ideal_size = Size::new(width, width * aspect_ratio);
 
         // It may be possible to remove these in the future if the invariant is checked elsewhere.
         let aspect_ratio = aspect_ratio.abs();
@@ -203,10 +142,8 @@ impl BoxConstraints {
 
         // Then we check if any `Size`s with our desired aspect ratio are inside the constraints.
         // TODO this currently outputs garbage when things are < 0 - See https://github.com/linebender/xilem/issues/377
-        let min_w_min_h = self.min.height / self.min.width;
-        let max_w_min_h = self.min.height / self.max.width;
-        let min_w_max_h = self.max.height / self.min.width;
-        let max_w_max_h = self.max.height / self.max.width;
+        let max_w_min_h = 0.0;
+        let max_w_max_h = self.exact.height / self.exact.width;
 
         // When the aspect ratio line crosses the constraints, the closest point must be one of the
         // two points where the aspect ratio enters/exits.
@@ -216,59 +153,20 @@ impl BoxConstraints {
         // to do is check which one of these has the closest aspect ratio.
 
         // Check each possible intersection (or not) of the aspect ratio line with the constraints
-        if aspect_ratio > min_w_max_h {
-            // outside max height min width
-            Size {
-                width: self.min.width,
-                height: self.max.height,
-            }
-        } else if aspect_ratio < max_w_min_h {
+        if aspect_ratio < max_w_min_h {
             // outside min height max width
-            Size {
-                width: self.max.width,
-                height: self.min.height,
-            }
-        } else if aspect_ratio > min_w_min_h {
-            // hits the constraints on the min width line
-            if width < self.min.width {
-                // we take the point on the min width
-                Size {
-                    width: self.min.width,
-                    height: self.min.width * aspect_ratio,
-                }
-            } else if aspect_ratio < max_w_max_h {
-                // exits through max.width
-                Size {
-                    width: self.max.width,
-                    height: self.max.width * aspect_ratio,
-                }
-            } else {
-                // exits through max.height
-                Size {
-                    width: self.max.height * aspect_ratio.recip(),
-                    height: self.max.height,
-                }
-            }
+            Size::new(self.exact.width, 0.0)
         } else {
             // final case is where we hit constraints on the min height line
-            if width < self.min.width {
+            if width < 0.0 {
                 // take the point on the min height
-                Size {
-                    width: self.min.height * aspect_ratio.recip(),
-                    height: self.min.height,
-                }
+                Size::new(0.0 * aspect_ratio.recip(), 0.0)
             } else if aspect_ratio > max_w_max_h {
                 // exit thru max height
-                Size {
-                    width: self.max.height * aspect_ratio.recip(),
-                    height: self.max.height,
-                }
+                Size::new(self.exact.height * aspect_ratio.recip(), self.exact.height)
             } else {
                 // exit thru max width
-                Size {
-                    width: self.max.width,
-                    height: self.max.width * aspect_ratio,
-                }
+                Size::new(self.exact.width, self.exact.width * aspect_ratio)
             }
         }
     }
@@ -278,9 +176,8 @@ impl BoxConstraints {
 mod tests {
     use super::*;
 
-    fn bc(min_width: f64, min_height: f64, max_width: f64, max_height: f64) -> BoxConstraints {
+    fn bc(max_width: f64, max_height: f64) -> BoxConstraints {
         BoxConstraints::new(
-            Size::new(min_width, min_height),
             Size::new(max_width, max_height),
         )
     }
@@ -289,71 +186,71 @@ mod tests {
     fn constrain_aspect_ratio() {
         for (bc, aspect_ratio, width, output) in [
             // The ideal size lies within the constraints
-            (bc(0.0, 0.0, 100.0, 100.0), 1.0, 50.0, Size::new(50.0, 50.0)),
-            (bc(0.0, 10.0, 90.0, 100.0), 1.0, 50.0, Size::new(50.0, 50.0)),
+            (bc(100.0, 100.0), 1.0, 50.0, Size::new(50.0, 50.0)),
+            (bc(90.0, 100.0), 1.0, 50.0, Size::new(50.0, 50.0)),
             // The correct aspect ratio is available (but not width)
             // min height
             (
-                bc(10.0, 10.0, 100.0, 100.0),
+                bc(100.0, 100.0),
                 1.0,
                 5.0,
                 Size::new(10.0, 10.0),
             ),
             (
-                bc(40.0, 90.0, 60.0, 100.0),
+                bc(60.0, 100.0),
                 2.0,
                 30.0,
                 Size::new(45.0, 90.0),
             ),
             (
-                bc(10.0, 10.0, 100.0, 100.0),
+                bc(100.0, 100.0),
                 0.5,
                 5.0,
                 Size::new(20.0, 10.0),
             ),
             // min width
             (
-                bc(10.0, 10.0, 100.0, 100.0),
+                bc(100.0, 100.0),
                 2.0,
                 5.0,
                 Size::new(10.0, 20.0),
             ),
             (
-                bc(90.0, 40.0, 100.0, 60.0),
+                bc(100.0, 60.0),
                 0.5,
                 60.0,
                 Size::new(90.0, 45.0),
             ),
             (
-                bc(50.0, 0.0, 50.0, 100.0),
+                bc(50.0, 100.0),
                 1.0,
                 100.0,
                 Size::new(50.0, 50.0),
             ),
             // max height
             (
-                bc(10.0, 10.0, 100.0, 100.0),
+                bc(100.0, 100.0),
                 2.0,
                 105.0,
                 Size::new(50.0, 100.0),
             ),
             (
-                bc(10.0, 10.0, 100.0, 100.0),
+                bc(100.0, 100.0),
                 0.5,
                 105.0,
                 Size::new(100.0, 50.0),
             ),
             // The correct aspect ratio is not available
             (
-                bc(20.0, 20.0, 40.0, 40.0),
+                bc(40.0, 40.0),
                 10.0,
                 30.0,
                 Size::new(20.0, 40.0),
             ),
-            (bc(20.0, 20.0, 40.0, 40.0), 0.1, 30.0, Size::new(40.0, 20.0)),
+            (bc(40.0, 40.0), 0.1, 30.0, Size::new(40.0, 20.0)),
             // non-finite
             (
-                bc(50.0, 0.0, 50.0, f64::INFINITY),
+                bc(50.0, f64::INFINITY),
                 1.0,
                 100.0,
                 Size::new(50.0, 50.0),
@@ -367,13 +264,5 @@ mod tests {
                 "bc:{bc:?}, aspect_ratio:{aspect_ratio}, width:{width}",
             );
         }
-    }
-
-    #[test]
-    fn unbounded() {
-        assert!(!BoxConstraints::UNBOUNDED.is_width_bounded());
-        assert!(!BoxConstraints::UNBOUNDED.is_height_bounded());
-
-        assert_eq!(BoxConstraints::UNBOUNDED.min(), Size::ZERO);
     }
 }

@@ -1,10 +1,13 @@
 // Copyright 2024 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
+// Public imports
+pub use masonry::widget::{CrossAxisAlignment, FlexParams, MainAxisAlignment};
+pub use masonry::axis::Axis;
+
 use std::marker::PhantomData;
 
 use masonry::widget::{self, WidgetMut};
-pub use masonry::widget::{Axis, CrossAxisAlignment, FlexParams, MainAxisAlignment};
 use masonry::Widget;
 
 use crate::core::{

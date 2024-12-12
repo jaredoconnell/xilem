@@ -11,11 +11,16 @@ use vello::Scene;
 use crate::kurbo::Size;
 use crate::paint_scene_helpers::{fill_lin_gradient, stroke, UnitPoint};
 use crate::text::ArcStr;
-use crate::widget::WidgetMut;
+use crate::widget::{ContentFill, WidgetMut};
+
 use crate::{
     theme, AccessCtx, AccessEvent, BoxConstraints, EventCtx, LayoutCtx, PaintCtx, Point,
     PointerEvent, QueryCtx, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetId,
 };
+use crate::axis::Axis;
+use crate::biaxial::BiAxial;
+
+const DEFAULT_WIDTH: f64 = 400.;
 
 use super::{Label, LineBreaking, WidgetPod};
 
@@ -104,8 +109,8 @@ impl Widget for ProgressBar {
 
     fn layout(&mut self, ctx: &mut LayoutCtx, bc: &BoxConstraints) -> Size {
         const DEFAULT_WIDTH: f64 = 400.;
-        // TODO: Clearer constraints here
-        let label_size = ctx.run_layout(&mut self.label, &bc.loosen());
+        // TODO: Fix centering
+        let label_size = ctx.run_layout(&mut self.label, bc);
         let desired_size = Size::new(
             DEFAULT_WIDTH.max(label_size.width),
             crate::theme::BASIC_WIDGET_HEIGHT.max(label_size.height),
@@ -119,6 +124,21 @@ impl Widget for ProgressBar {
         );
         ctx.place_child(&mut self.label, text_pos);
         final_size
+    }
+
+    fn measure(&mut self, ctx: &mut LayoutCtx, axis: Axis, fill: &BiAxial<ContentFill>) -> f64 {
+        let label_size = ctx.run_measure(&mut self.label, axis, fill);
+        let min_size = match axis {
+            Axis::Horizontal => DEFAULT_WIDTH,
+            Axis::Vertical => theme::BASIC_WIDGET_HEIGHT,
+        };
+        let widget_size = label_size.max(min_size);
+        match fill.value_for_axis(axis) {
+            ContentFill::Max => widget_size,
+            ContentFill::Min => label_size.min(min_size),
+            ContentFill::Constrain(constrained_size) => widget_size.min(constrained_size),
+            ContentFill::MaxStretch => f64::INFINITY,
+        }
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx, scene: &mut Scene) {
